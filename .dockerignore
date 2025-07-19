@@ -1,0 +1,123 @@
+# Git
+.git
+.gitignore
+README.md
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+pip-log.txt
+pip-delete-this-directory.txt
+.tox
+.coverage
+.coverage.*
+.pytest_cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.cache
+.mypy_cache
+.bandit
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Testing
+htmlcov/
+.coverage
+.pytest_cache/
+test.db
+
+# Development
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Documentation
+docs/
+*.md
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Monitoring
+monitoring/
+grafana/
+prometheus/
+
+# Backups
+backups/
+*.sql
+*.dump
+
+# SSL certificates
+ssl/
+*.pem
+*.key
+*.crt
+
+# Node.js (if any frontend components)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Local configuration
+config.local.json
+settings.local.json
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
