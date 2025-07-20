@@ -102,22 +102,35 @@ async def rate_limiting(request: Request, call_next):
     """Apply rate limiting to API requests."""
     from app.api.deps import rate_limiter
     
-    # Skip rate limiting for health check and root endpoints
-    if request.url.path in ["/health", "/", "/docs", "/redoc", "/openapi.json"]:
+    # Skip rate limiting for health check, root endpoints, and auth endpoints during development
+    skip_paths = ["/health", "/", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login", "/api/v1/auth/register"]
+    if request.url.path in skip_paths:
         return await call_next(request)
     
     try:
-        # Apply rate limiting
-        await rate_limiter.check_rate_limit(request)
+        # Apply rate limiting with more lenient limits for development
+        await rate_limiter.check_rate_limit(
+            request, 
+            calls_per_minute=300,  # Increased from default
+            calls_per_second=50    # Increased from default 10
+        )
         response = await call_next(request)
         return response
     except HTTPException as e:
-        # Rate limit exceeded, return error response
+        # Rate limit exceeded, return error response with CORS headers
         from fastapi.responses import JSONResponse
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+        # Merge with existing headers
+        headers = {**cors_headers, **(e.headers or {})}
         return JSONResponse(
             status_code=e.status_code,
             content={"detail": e.detail},
-            headers=e.headers
+            headers=headers
         )
 
 

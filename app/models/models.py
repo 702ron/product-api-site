@@ -21,14 +21,15 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=True)
     
+    # Authentication
+    hashed_password = Column(String(255), nullable=True)  # Hashed password for authentication
+    
     # Credit system
     credit_balance = Column(Integer, default=10, nullable=False)  # 10 free trial credits
     
-    # Supabase user ID for authentication
-    supabase_user_id = Column(String(255), unique=True, index=True, nullable=True)
-    
     # Metadata
     is_active = Column(Boolean, default=True, nullable=False)
+    is_verified = Column(Boolean, default=False, nullable=False)  # Email verification status
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     
@@ -40,6 +41,11 @@ class User(Base):
     __table_args__ = (
         CheckConstraint('credit_balance >= 0', name='credit_balance_non_negative'),
     )
+    
+    @property
+    def credits(self) -> int:
+        """Return credit balance for compatibility."""
+        return self.credit_balance
 
 
 class CreditTransaction(Base):

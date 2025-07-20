@@ -1,5 +1,5 @@
 """
-JWT authentication and security utilities for Supabase integration.
+JWT authentication and security utilities.
 """
 import uuid
 from datetime import datetime, timedelta
@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import HTTPException, Depends, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from passlib.hash import bcrypt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -38,6 +39,33 @@ class UserNotFoundError(ResourceNotFoundError):
             resource_type="user",
             resource_id=user_id
         )
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Verify a password against a hash.
+    
+    Args:
+        plain_password: Plain text password
+        hashed_password: Hashed password
+        
+    Returns:
+        True if password matches, False otherwise
+    """
+    return bcrypt.verify(plain_password, hashed_password)
+
+
+def hash_password(password: str) -> str:
+    """
+    Hash a password.
+    
+    Args:
+        password: Plain text password
+        
+    Returns:
+        Hashed password
+    """
+    return bcrypt.hash(password)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -76,16 +104,10 @@ def verify_token(token: str) -> dict:
         JWTError: If token is invalid
     """
     try:
-        # Try to decode with our secret key first (for locally generated tokens)
         payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         return payload
     except JWTError:
-        try:
-            # Try to decode with Supabase JWT secret (for Supabase tokens)
-            payload = jwt.decode(token, settings.supabase_jwt_secret, algorithms=["HS256"])
-            return payload
-        except JWTError:
-            raise JWTError("Could not validate credentials")
+        raise JWTError("Could not validate credentials")
 
 
 async def get_current_user_id(
@@ -216,12 +238,13 @@ def verify_supabase_jwt(token: str) -> dict:
         raise JWTError(f"Invalid Supabase token: {str(e)}")
 
 
-def create_user_access_token(user: User) -> str:
+def create_user_access_token(user: User, expires_delta: Optional[timedelta] = None) -> str:
     """
     Create access token for a user.
     
     Args:
         user: User object
+        expires_delta: Token expiration time
         
     Returns:
         JWT access token
@@ -230,9 +253,8 @@ def create_user_access_token(user: User) -> str:
         "sub": str(user.id),
         "user_id": str(user.id),
         "email": user.email,
-        "supabase_user_id": user.supabase_user_id,
     }
-    return create_access_token(token_data)
+    return create_access_token(token_data, expires_delta)
 
 
 async def verify_user_has_credits(

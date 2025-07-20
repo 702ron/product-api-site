@@ -33,7 +33,7 @@ class UserInDB(UserBase):
     
     id: uuid.UUID
     credit_balance: int
-    supabase_user_id: Optional[str] = None
+    is_verified: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -59,6 +59,7 @@ class UserRegister(BaseModel):
 class TokenResponse(BaseModel):
     """Schema for authentication token response."""
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: int
     user: UserResponse
@@ -106,17 +107,3 @@ class UserProfile(BaseModel):
     total_credits_purchased: Optional[int] = None
 
 
-class SupabaseUserCreate(BaseModel):
-    """Schema for creating user via Supabase."""
-    email: EmailStr
-    password: str
-    full_name: Optional[str] = None
-
-
-class SupabaseAuthResponse(BaseModel):
-    """Schema for Supabase authentication response."""
-    access_token: str
-    token_type: str
-    expires_in: int
-    refresh_token: str
-    user: dict

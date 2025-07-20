@@ -30,11 +30,6 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = Field(default="redis://localhost:6379", env="REDIS_URL")
     
-    # Supabase
-    supabase_url: str = Field(default="https://placeholder.supabase.co", env="SUPABASE_URL")
-    supabase_key: str = Field(default="placeholder-key", env="SUPABASE_ANON_KEY")
-    supabase_service_key: str = Field(default="placeholder-service-key", env="SUPABASE_SERVICE_ROLE_KEY")
-    supabase_jwt_secret: str = Field(default="placeholder-jwt-secret", env="SUPABASE_JWT_SECRET")
     
     # Stripe
     stripe_publishable_key: str = Field(default="pk_test_placeholder", env="STRIPE_PUBLISHABLE_KEY")
@@ -47,7 +42,7 @@ class Settings(BaseSettings):
     
     # CORS
     cors_origins: str = Field(
-        default="http://localhost:3000,https://yourdomain.com",
+        default="http://localhost:3000,http://localhost:3001,https://yourdomain.com",
         env="CORS_ORIGINS"
     )
     
@@ -56,8 +51,8 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(',')]
     
     # Rate Limiting
-    rate_limit_default: str = Field(default="100/minute", env="RATE_LIMIT_DEFAULT")
-    rate_limit_auth: str = Field(default="10/minute", env="RATE_LIMIT_AUTH")
+    rate_limit_default: str = Field(default="1000/minute", env="RATE_LIMIT_DEFAULT")
+    rate_limit_auth: str = Field(default="100/minute", env="RATE_LIMIT_AUTH")
     rate_limit_external_api: str = Field(default="60/minute", env="RATE_LIMIT_EXTERNAL_API")
     
     class Config:

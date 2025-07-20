@@ -7,103 +7,77 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from supabase import Client, create_client
+from passlib.hash import bcrypt
 
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import (
     get_current_user, get_current_active_user, create_access_token,
-    verify_supabase_jwt, create_user_access_token
+    create_user_access_token, verify_password
 )
 from app.models.models import User
 from app.schemas.auth import (
     UserRegister, UserLogin, UserResponse, TokenResponse,
-    UserProfile, SupabaseUserCreate
+    UserProfile
 )
 
 router = APIRouter()
 
-# Supabase client - lazy initialization to avoid startup errors with placeholder keys
-def get_supabase_client() -> Client:
-    try:
-        return create_client(settings.supabase_url, settings.supabase_key)
-    except Exception:
-        # Return None for testing with placeholder keys
-        return None
 
-supabase: Optional[Client] = None
-try:
-    supabase = get_supabase_client()
-except Exception:
-    pass
-
-
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=TokenResponse)
 async def register_user(
     user_data: UserRegister,
     db: AsyncSession = Depends(get_db)
-):
+) -> TokenResponse:
     """
     Register a new user with email and password.
-    
-    Creates user in both Supabase and local database.
     """
-    # Check if user already exists in local database
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="User with this email already exists"
-        )
-    
     try:
-        # Create user in Supabase
-        supabase_response = supabase.auth.sign_up({
-            "email": user_data.email,
-            "password": user_data.password,
-            "options": {
-                "data": {
-                    "full_name": user_data.full_name
-                }
-            }
-        })
+        # Check if user already exists
+        stmt = select(User).where(User.email == user_data.email.lower())
+        result = await db.execute(stmt)
+        existing_user = result.scalar_one_or_none()
         
-        if supabase_response.user is None:
+        if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to create user in authentication service"
+                detail="User with this email already exists"
             )
         
-        # Create user in local database
-        db_user = User(
-            email=user_data.email,
+        # Hash the password
+        hashed_password = bcrypt.hash(user_data.password)
+        
+        # Create new user
+        new_user = User(
+            id=str(uuid.uuid4()),
+            email=user_data.email.lower(),
             full_name=user_data.full_name,
-            supabase_user_id=supabase_response.user.id,
-            credit_balance=10,  # 10 free trial credits
-            is_active=True
+            hashed_password=hashed_password,
+            credit_balance=10,  # Free trial credits
+            is_active=True,
+            is_verified=True  # Auto-verify for now
         )
         
-        db.add(db_user)
+        db.add(new_user)
         await db.commit()
-        await db.refresh(db_user)
+        await db.refresh(new_user)
         
         # Create access token
-        access_token = create_user_access_token(db_user)
+        access_token = create_user_access_token(new_user)
+        refresh_token = create_user_access_token(new_user, expires_delta=timedelta(days=30))
         
         return TokenResponse(
             access_token=access_token,
+            refresh_token=refresh_token,
             token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse.model_validate(db_user)
+            expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
+            user=UserResponse.model_validate(new_user)
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
-        if "already registered" in str(e).lower():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="User with this email already exists"
-            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
@@ -112,175 +86,126 @@ async def register_user(
 
 @router.post("/login", response_model=TokenResponse)
 async def login_user(
-    user_credentials: UserLogin,
+    credentials: UserLogin,
     db: AsyncSession = Depends(get_db)
-):
+) -> TokenResponse:
     """
-    Authenticate user with email and password.
-    
-    Validates credentials with Supabase and returns JWT token.
+    Login user with email and password.
     """
     try:
-        # Authenticate with Supabase
-        supabase_response = supabase.auth.sign_in_with_password({
-            "email": user_credentials.email,
-            "password": user_credentials.password
-        })
+        # Find user by email
+        stmt = select(User).where(User.email == credentials.email.lower())
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
         
-        if supabase_response.user is None:
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid email or password"
             )
         
-        # Get user from local database
-        result = await db.execute(
-            select(User).where(User.supabase_user_id == supabase_response.user.id)
-        )
-        db_user = result.scalar_one_or_none()
-        
-        if db_user is None:
-            # Create user in local database if not exists
-            db_user = User(
-                email=user_credentials.email,
-                supabase_user_id=supabase_response.user.id,
-                credit_balance=10,  # 10 free trial credits
-                is_active=True
-            )
-            db.add(db_user)
-            await db.commit()
-            await db.refresh(db_user)
-        
-        if not db_user.is_active:
+        # Verify password
+        if not user.hashed_password or not verify_password(credentials.password, user.hashed_password):
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User account is disabled"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Account is disabled"
             )
         
         # Create access token
-        access_token = create_user_access_token(db_user)
+        access_token = create_user_access_token(user)
+        refresh_token = create_user_access_token(user, expires_delta=timedelta(days=30))
         
         return TokenResponse(
             access_token=access_token,
+            refresh_token=refresh_token,
             token_type="bearer",
-            expires_in=settings.access_token_expire_minutes * 60,
-            user=UserResponse.model_validate(db_user)
+            expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
+            user=UserResponse.model_validate(user)
         )
         
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication failed"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}"
         )
 
 
-@router.get("/me", response_model=UserProfile)
+@router.get("/me", response_model=UserResponse)
 async def get_current_user_profile(
+    current_user: User = Depends(get_current_active_user)
+) -> UserResponse:
+    """
+    Get current user profile.
+    """
+    return UserResponse.model_validate(current_user)
+
+
+@router.put("/me", response_model=UserResponse)
+async def update_user_profile(
+    profile_data: UserProfile,
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
-):
+) -> UserResponse:
     """
-    Get current user profile information.
-    
-    Returns user details including credit balance and usage statistics.
+    Update current user profile.
     """
-    # Get usage statistics (optional)
-    from sqlalchemy import func
-    from app.models.models import CreditTransaction, QueryLog
-    
-    # Get total credits used
-    credits_used_result = await db.execute(
-        select(func.sum(CreditTransaction.amount))
-        .where(
-            CreditTransaction.user_id == current_user.id,
-            CreditTransaction.transaction_type == 'usage'
+    try:
+        # Update user fields
+        if profile_data.full_name is not None:
+            current_user.full_name = profile_data.full_name
+        
+        await db.commit()
+        await db.refresh(current_user)
+        
+        return UserResponse.model_validate(current_user)
+        
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Profile update failed: {str(e)}"
         )
-    )
-    total_credits_used = abs(credits_used_result.scalar() or 0)
-    
-    # Get total credits purchased
-    credits_purchased_result = await db.execute(
-        select(func.sum(CreditTransaction.amount))
-        .where(
-            CreditTransaction.user_id == current_user.id,
-            CreditTransaction.transaction_type == 'purchase'
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+) -> TokenResponse:
+    """
+    Refresh access token.
+    """
+    try:
+        # Create new access token
+        access_token = create_user_access_token(current_user)
+        refresh_token = create_user_access_token(current_user, expires_delta=timedelta(days=30))
+        
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type="bearer",
+            expires_in=settings.access_token_expire_minutes * 60,  # Convert to seconds
+            user=UserResponse.model_validate(current_user)
         )
-    )
-    total_credits_purchased = credits_purchased_result.scalar() or 0
-    
-    # Get total queries
-    queries_result = await db.execute(
-        select(func.count(QueryLog.id))
-        .where(QueryLog.user_id == current_user.id)
-    )
-    total_queries = queries_result.scalar() or 0
-    
-    profile = UserProfile.model_validate(current_user)
-    profile.total_queries = total_queries
-    profile.total_credits_used = total_credits_used
-    profile.total_credits_purchased = total_credits_purchased
-    
-    return profile
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Token refresh failed: {str(e)}"
+        )
 
 
 @router.post("/logout")
 async def logout_user():
     """
-    Logout user (client-side token invalidation).
-    
-    Since we're using stateless JWT tokens, logout is handled on the client side
-    by removing the token. This endpoint serves as a confirmation.
+    Logout user (client should remove token).
     """
     return {"message": "Successfully logged out"}
-
-
-@router.post("/refresh", response_model=TokenResponse)
-async def refresh_token(
-    current_user: User = Depends(get_current_user)
-):
-    """
-    Refresh user access token.
-    
-    Generates a new access token for the authenticated user.
-    """
-    access_token = create_user_access_token(current_user)
-    
-    return TokenResponse(
-        access_token=access_token,
-        token_type="bearer", 
-        expires_in=settings.access_token_expire_minutes * 60,
-        user=UserResponse.model_validate(current_user)
-    )
-
-
-@router.post("/verify")
-async def verify_token(
-    current_user: User = Depends(get_current_active_user)
-):
-    """
-    Verify that the provided token is valid.
-    
-    Returns user information if token is valid.
-    """
-    return {
-        "valid": True,
-        "user": UserResponse.model_validate(current_user)
-    }
-
-
-@router.delete("/account")
-async def delete_account(
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Delete user account (soft delete).
-    
-    Deactivates the account rather than permanently deleting it.
-    """
-    current_user.is_active = False
-    await db.commit()
-    
-    return {"message": "Account successfully deactivated"}
