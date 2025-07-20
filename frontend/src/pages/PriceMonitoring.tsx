@@ -61,8 +61,8 @@ export default function PriceMonitoring() {
   const { data: monitors, isLoading: monitorsLoading } = useQuery({
     queryKey: ['price-monitors'],
     queryFn: async () => {
-      const response = await api.get('/api/v1/monitoring/monitors');
-      return response.data as PriceMonitor[];
+      const response = await api.get('/monitoring/monitors');
+      return response.data.monitors as PriceMonitor[];
     },
     enabled: !!user,
   });
@@ -72,7 +72,7 @@ export default function PriceMonitoring() {
     queryKey: ['price-history', selectedMonitor],
     queryFn: async () => {
       if (!selectedMonitor) return [];
-      const response = await api.get(`/api/v1/monitoring/monitors/${selectedMonitor}/history`);
+      const response = await api.get(`/monitoring/monitors/${selectedMonitor}/history`);
       return response.data as PriceHistory[];
     },
     enabled: !!selectedMonitor,
@@ -81,7 +81,7 @@ export default function PriceMonitoring() {
   // Create price monitor mutation
   const createMonitorMutation = useMutation({
     mutationFn: async (data: MonitorFormData) => {
-      const response = await api.post('/api/v1/monitoring/monitors', data);
+      const response = await api.post('/monitoring/monitors', data);
       return response.data;
     },
     onSuccess: () => {
@@ -93,7 +93,7 @@ export default function PriceMonitoring() {
   // Toggle monitor status mutation
   const toggleMonitorMutation = useMutation({
     mutationFn: async ({ id, is_active }: { id: string; is_active: boolean }) => {
-      const response = await api.patch(`/api/v1/monitoring/monitors/${id}`, { is_active });
+      const response = await api.patch(`/monitoring/monitors/${id}`, { is_active });
       return response.data;
     },
     onSuccess: () => {
@@ -104,7 +104,7 @@ export default function PriceMonitoring() {
   // Delete monitor mutation
   const deleteMonitorMutation = useMutation({
     mutationFn: async (id: string) => {
-      await api.delete(`/api/v1/monitoring/monitors/${id}`);
+      await api.delete(`/monitoring/monitors/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['price-monitors'] });

@@ -83,7 +83,7 @@ export function CreditManagement() {
         api.get('/credits/stats'),
       ]);
 
-      setTransactions(transactionsResponse.data);
+      setTransactions(transactionsResponse.data.transactions || []);
       setStats(statsResponse.data);
       await refreshUser();
     } catch (error) {
@@ -186,7 +186,7 @@ export function CreditManagement() {
               <CreditCard className="h-12 w-12 text-indigo-600 mr-4" />
               <div>
                 <h2 className="text-3xl font-bold text-gray-900">
-                  {user?.credits || 0} Credits
+                  {user?.credit_balance || 0} Credits
                 </h2>
                 <p className="text-gray-600">Current balance</p>
               </div>

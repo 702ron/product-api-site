@@ -3,10 +3,10 @@ Authentication endpoints for user registration, login, and profile management.
 """
 import uuid
 from datetime import timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from passlib.hash import bcrypt
 
 from app.core.config import settings
@@ -17,8 +17,7 @@ from app.core.security import (
 )
 from app.models.models import User
 from app.schemas.auth import (
-    UserRegister, UserLogin, UserResponse, TokenResponse,
-    UserProfile
+    UserRegister, UserLogin, UserResponse, TokenResponse
 )
 
 router = APIRouter()
@@ -138,41 +137,6 @@ async def login_user(
         )
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_profile(
-    current_user: User = Depends(get_current_active_user)
-) -> UserResponse:
-    """
-    Get current user profile.
-    """
-    return UserResponse.model_validate(current_user)
-
-
-@router.put("/me", response_model=UserResponse)
-async def update_user_profile(
-    profile_data: UserProfile,
-    current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_db)
-) -> UserResponse:
-    """
-    Update current user profile.
-    """
-    try:
-        # Update user fields
-        if profile_data.full_name is not None:
-            current_user.full_name = profile_data.full_name
-        
-        await db.commit()
-        await db.refresh(current_user)
-        
-        return UserResponse.model_validate(current_user)
-        
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Profile update failed: {str(e)}"
-        )
 
 
 @router.post("/refresh", response_model=TokenResponse)
@@ -201,6 +165,8 @@ async def refresh_token(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token refresh failed: {str(e)}"
         )
+
+
 
 
 @router.post("/logout")

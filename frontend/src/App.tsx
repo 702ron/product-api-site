@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AdminRoute } from './components/AdminRoute';
 import { Layout } from './components/Layout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginForm } from './components/LoginForm';
@@ -14,6 +15,7 @@ import { FNSKUConverter } from './pages/FNSKUConverter';
 import PriceMonitoring from './pages/PriceMonitoring';
 import Analytics from './pages/Analytics';
 import Homepage from './pages/Homepage';
+import AdminDashboard from './pages/AdminDashboard';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -92,6 +94,18 @@ function App() {
                   <Layout>
                     <Analytics />
                   </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <Layout>
+                      <AdminDashboard />
+                    </Layout>
+                  </AdminRoute>
                 </ProtectedRoute>
               }
             />

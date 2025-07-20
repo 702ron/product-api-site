@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear Authentication</title>
+</head>
+<body>
+    <h1>Clear Authentication Tokens</h1>
+    <p>This will clear all stored authentication tokens.</p>
+    <button onclick="clearAuth()">Clear Tokens</button>
+    <p id="status"></p>
+    
+    <script>
+        function clearAuth() {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            sessionStorage.clear();
+            document.getElementById('status').innerHTML = '✅ Tokens cleared! You can now go back to the app and login fresh.';
+        }
+    </script>
+</body>
+</html>

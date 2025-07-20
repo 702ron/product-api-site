@@ -25,7 +25,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const token = localStorage.getItem('access_token');
       if (token) {
-        const response = await api.get('/auth/me');
+        const response = await api.get('/users/me');
         setUser(response.data);
       }
     } catch (error) {
@@ -68,7 +68,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshUser = async () => {
     if (user) {
-      const response = await api.get('/auth/me');
+      const response = await api.get('/users/me');
       setUser(response.data);
     }
   };

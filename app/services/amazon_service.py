@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 import httpx
-import aioredis
+# import aioredis  # Temporarily disabled for testing
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
@@ -44,7 +44,7 @@ class AmazonService:
                 "User-Agent": "Amazon-Product-Intelligence-Platform/1.0"
             }
         )
-        self.redis_client: Optional[aioredis.Redis] = None
+        # self.redis_client: Optional[aioredis.Redis] = None  # Temporarily disabled
         self.rate_limit_calls = {}  # In-memory rate limiting
         
         # API configuration
@@ -55,11 +55,11 @@ class AmazonService:
         self.max_calls_per_minute = 60
         self.max_calls_per_second = 2
         
-    async def _get_redis_client(self) -> aioredis.Redis:
-        """Get Redis client for caching."""
-        if self.redis_client is None:
-            self.redis_client = aioredis.from_url(settings.redis_url)
-        return self.redis_client
+    # async def _get_redis_client(self) -> aioredis.Redis:
+    #     """Get Redis client for caching."""
+    #     if self.redis_client is None:
+    #         self.redis_client = aioredis.from_url(settings.redis_url)
+    #     return self.redis_client
     
     async def _check_rate_limit(self, marketplace: str) -> bool:
         """
@@ -484,8 +484,8 @@ class AmazonService:
     async def close(self):
         """Close HTTP client and Redis connection."""
         await self.http_client.aclose()
-        if self.redis_client:
-            await self.redis_client.close()
+        # if self.redis_client:
+        #     await self.redis_client.close()
 
 
 # Global Amazon service instance

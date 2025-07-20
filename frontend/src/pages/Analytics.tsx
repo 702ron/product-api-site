@@ -53,7 +53,7 @@ export default function Analytics() {
   const { data: analytics, isLoading, error } = useQuery({
     queryKey: ['analytics', dateRange],
     queryFn: async () => {
-      const response = await api.get('/api/v1/monitoring/analytics', {
+      const response = await api.get('/monitoring/analytics', {
         params: dateRange,
       });
       return response.data as AnalyticsData;

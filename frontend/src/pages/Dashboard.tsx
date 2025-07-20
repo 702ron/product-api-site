@@ -76,7 +76,7 @@ export function Dashboard() {
                 <CreditCard className="h-8 w-8 text-indigo-600 mr-3" />
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">
-                    {user?.credits || 0} Credits
+                    {user?.credit_balance || 0} Credits
                   </h2>
                   <p className="text-gray-600">Available balance</p>
                 </div>

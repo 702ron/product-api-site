@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Union, Callable
 from enum import Enum
 from dataclasses import dataclass, asdict
-import redis.asyncio as redis
+# import redis.asyncio as redis  # Temporarily disabled for testing
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)

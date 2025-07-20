@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_active_user
-from app.models.models import User
+from app.models.models import User, AdminUser
+from app.middleware.admin_auth import get_admin_user_from_token, require_admin_permission, require_admin_role
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
@@ -189,18 +190,33 @@ async def validate_api_key(
 
 
 async def require_admin_user(
-    current_user: User = Depends(get_current_active_user)
-) -> User:
+    admin_user: AdminUser = Depends(get_admin_user_from_token)
+) -> AdminUser:
     """Dependency that requires admin privileges."""
-    # TODO: Implement actual admin check based on user roles
-    # For now, this is a placeholder
-    if not current_user.is_active:
+    if not admin_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
     
-    return current_user
+    return admin_user
+
+
+async def require_super_admin(
+    admin_user: AdminUser = Depends(require_admin_role("super_admin"))
+) -> AdminUser:
+    """Dependency that requires super admin privileges."""
+    return admin_user
+
+
+async def apply_admin_rate_limit(request: Request):
+    """Dependency for admin endpoints with higher rate limits."""
+    await rate_limiter.check_rate_limit(
+        request,
+        calls_per_minute=500,  # Higher limit for admin users
+        calls_per_second=20    # Higher limit for admin users
+    )
+    return True
 
 
 async def validate_content_type(request: Request):

@@ -164,12 +164,9 @@ async def get_current_user(
         HTTPException: If user not found
     """
     # Find user by ID directly (standard database authentication)
-    try:
-        user_uuid = uuid.UUID(user_id)
-        result = await db.execute(select(User).where(User.id == user_uuid))
-        user = result.scalar_one_or_none()
-    except ValueError:
-        user = None
+    # User ID is already a string in the database, no need to convert to UUID
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
     
     if user is None:
         raise HTTPException(

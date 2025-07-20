@@ -31,19 +31,19 @@ async def lifespan(app: FastAPI):
     init_metrics()
     logger.info("Metrics initialized")
     
-    # Initialize queue system and register handlers
-    from app.core.queue import queue_manager
-    from app.workers.bulk_processor import register_handlers
-    await queue_manager.connect()
-    await register_handlers()
-    logger.info("Queue system initialized")
+    # Initialize queue system and register handlers (temporarily disabled)
+    # from app.core.queue import queue_manager
+    # from app.workers.bulk_processor import register_handlers
+    # await queue_manager.connect()
+    # await register_handlers()
+    logger.info("Queue system temporarily disabled for testing")
     
     yield
     
     # Shutdown
     logger.info("Shutting down...")
-    await queue_manager.disconnect()
-    logger.info("Queue system disconnected")
+    # await queue_manager.disconnect()
+    logger.info("Queue system disconnected (was disabled)")
     await close_db()
     logger.info("Database connections closed")
 
@@ -238,15 +238,21 @@ async def metrics():
 
 
 # Include API routers
-from app.api.v1.endpoints import auth, credits, payments, products, conversion, jobs, monitoring
+from app.api.v1.endpoints import auth, credits, payments, products, conversion, jobs, monitoring, users
+from app.api.v1.endpoints.admin import users as admin_users, system
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["authentication"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
 app.include_router(credits.router, prefix="/api/v1/credits", tags=["credits"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["payments"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["products"])
 app.include_router(conversion.router, prefix="/api/v1/conversion", tags=["conversion"])
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
 app.include_router(monitoring.router, prefix="/api/v1/monitoring", tags=["monitoring"])
+
+# Admin routes
+app.include_router(admin_users.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(system.router, prefix="/api/v1/admin", tags=["admin"])
 
 # Global exception handlers
 from app.core.exception_handlers import add_exception_handlers

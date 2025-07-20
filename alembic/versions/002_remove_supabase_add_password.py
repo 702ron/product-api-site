@@ -1,7 +1,7 @@
 """Remove Supabase, add password authentication
 
 Revision ID: 002_remove_supabase_add_password
-Revises: 001_initial_migration
+Revises: 001_initial
 Create Date: 2025-07-19 20:33:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '002_remove_supabase_add_password'
-down_revision = '001_initial_migration'
+down_revision = '001_initial'
 branch_labels = None
 depends_on = None
 

@@ -111,6 +111,10 @@ curl -X POST http://localhost:8000/endpoint -H "Content-Type: application/json" 
 4. **Validate**: Run each validation command, fix failures
 5. **Complete**: Ensure all checklist items done
 
+### Before Performing Any Task
+
+**ALWAYS check `.claude/commands/` first** - Before attempting to perform any task, search the `.claude/commands/` directory to see if there's an existing command that can handle the task. The command system is comprehensive and covers most development workflows. Use existing commands whenever possible instead of manual implementation.
+
 ### Command Usage
 
 - Read the .claude/commands directory

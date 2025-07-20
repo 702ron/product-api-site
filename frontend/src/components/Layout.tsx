@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { api } from '../lib/api';
 import {
   Menu,
   X,
@@ -11,7 +12,8 @@ import {
   BarChart3,
   CreditCard,
   LogOut,
-  User
+  User,
+  Settings
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -23,6 +25,33 @@ export function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    const checkAdminStatus = async () => {
+      if (!user) {
+        setIsAdmin(false);
+        return;
+      }
+
+      try {
+        // Test admin access by trying to access admin users endpoint
+        await api.get('/admin/users?limit=1');
+        setIsAdmin(true);
+      } catch (error: any) {
+        // If we get a 403 or 401, user is not an admin
+        if (error.response?.status === 403 || error.response?.status === 401) {
+          setIsAdmin(false);
+        } else {
+          // For other errors (500, network issues), assume not admin to be safe
+          setIsAdmin(false);
+          console.warn('Admin status check failed:', error.message);
+        }
+      }
+    };
+
+    checkAdminStatus();
+  }, [user]);
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
@@ -31,6 +60,8 @@ export function Layout({ children }: LayoutProps) {
     { name: 'Price Monitoring', href: '/monitoring', icon: TrendingUp },
     { name: 'Analytics', href: '/analytics', icon: BarChart3 },
     { name: 'Credits', href: '/credits', icon: CreditCard },
+    // Only show admin link for admin users
+    ...(isAdmin ? [{ name: 'Admin', href: '/admin', icon: Settings }] : []),
   ];
 
   const handleLogout = async () => {
@@ -77,7 +108,7 @@ export function Layout({ children }: LayoutProps) {
               </div>
               <div className="ml-3 flex-1">
                 <p className="text-sm font-medium text-white">{user?.full_name}</p>
-                <p className="text-xs font-medium text-gray-300">{user?.credits || 0} credits</p>
+                <p className="text-xs font-medium text-gray-300">{user?.credit_balance || 0} credits</p>
               </div>
               <button
                 onClick={handleLogout}
@@ -136,7 +167,7 @@ export function Layout({ children }: LayoutProps) {
                   <User className="h-8 w-8 text-gray-300" />
                   <div className="ml-3">
                     <p className="text-base font-medium text-white">{user?.full_name}</p>
-                    <p className="text-sm font-medium text-gray-300">{user?.credits || 0} credits</p>
+                    <p className="text-sm font-medium text-gray-300">{user?.credit_balance || 0} credits</p>
                   </div>
                 </div>
                 <button

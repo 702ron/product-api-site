@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     rate_limit_auth: str = Field(default="100/minute", env="RATE_LIMIT_AUTH")
     rate_limit_external_api: str = Field(default="60/minute", env="RATE_LIMIT_EXTERNAL_API")
     
+    # Admin Configuration
+    admin_session_timeout: int = Field(default=3600, env="ADMIN_SESSION_TIMEOUT")  # 1 hour
+    admin_audit_retention_days: int = Field(default=365, env="ADMIN_AUDIT_RETENTION_DAYS")  # 1 year
+    admin_max_failed_login_attempts: int = Field(default=5, env="ADMIN_MAX_FAILED_LOGIN_ATTEMPTS")
+    admin_lockout_duration_minutes: int = Field(default=30, env="ADMIN_LOCKOUT_DURATION_MINUTES")
+    admin_require_2fa: bool = Field(default=False, env="ADMIN_REQUIRE_2FA")
+    admin_password_min_length: int = Field(default=12, env="ADMIN_PASSWORD_MIN_LENGTH")
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

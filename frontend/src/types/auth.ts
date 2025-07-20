@@ -2,8 +2,9 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
-  credits: number;
+  credit_balance: number;
   created_at: string;
+  updated_at: string;
   is_active: boolean;
   is_verified: boolean;
 }

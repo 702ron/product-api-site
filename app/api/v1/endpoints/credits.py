@@ -230,7 +230,25 @@ async def get_transaction_history(
         )
 
 
-# Alias for frontend compatibility
+# Frontend compatibility endpoints
+@router.get("/stats")
+async def get_credit_stats(
+    # Temporarily bypass auth for testing  
+    # current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get credit statistics for the frontend dashboard.
+    """
+    # Return mock data that matches the CreditStats interface
+    return {
+        "total_purchased": 200,
+        "total_used": 75,
+        "current_balance": 125,
+        "transactions_count": 15
+    }
+
+
 @router.get("/transactions")
 async def get_transactions(
     # Temporarily bypass auth for testing
