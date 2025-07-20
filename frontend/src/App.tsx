@@ -1,9 +1,10 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+//
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Layout } from './components/Layout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { LoginForm } from './components/LoginForm';
 import { RegisterForm } from './components/RegisterForm';
 import { Dashboard } from './pages/Dashboard';
@@ -12,6 +13,7 @@ import { CreditManagement } from './pages/CreditManagement';
 import { FNSKUConverter } from './pages/FNSKUConverter';
 import PriceMonitoring from './pages/PriceMonitoring';
 import Analytics from './pages/Analytics';
+import Homepage from './pages/Homepage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -94,8 +96,8 @@ function App() {
               }
             />
             
-            {/* Redirect root to dashboard */}
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            {/* Homepage route */}
+            <Route path="/" element={<Homepage />} />
           </Routes>
         </Router>
       </AuthProvider>
