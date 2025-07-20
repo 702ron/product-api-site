@@ -6,7 +6,7 @@ from unittest.mock import patch, Mock
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from app.core.security import create_access_token, verify_jwt_token, get_current_active_user
+from app.core.security import create_access_token, verify_supabase_jwt, get_current_active_user
 from app.core.exceptions import AuthenticationError
 from app.models.models import User
 

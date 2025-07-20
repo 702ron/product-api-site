@@ -1,0 +1,109 @@
+# Alert rules for Amazon Product Intelligence Platform
+groups:
+  - name: api_alerts
+    rules:
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: rate(api_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # High response time alert
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(api_request_duration_seconds_bucket[5m])) > 0.2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High API response time detected"
+          description: "95th percentile response time is {{ $value }}s"
+
+      # Low credit balance alert
+      - alert: LowUserCredits
+        expr: avg_user_credit_balance < 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Users have low credit balances"
+          description: "Average user credit balance is {{ $value }}"
+
+  - name: system_alerts
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # Low disk space
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Low disk space detected"
+          description: "Available disk space is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+  - name: database_alerts
+    rules:
+      # Database connection issues
+      - alert: DatabaseConnectionFailures
+        expr: rate(database_connections_failed_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection failures detected"
+          description: "Database connection failure rate is {{ $value }} per second"
+
+      # High database query time
+      - alert: SlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(database_query_duration_seconds_bucket[5m])) > 1.0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile query time is {{ $value }}s"
+
+  - name: business_alerts
+    rules:
+      # Low revenue alert
+      - alert: LowDailyRevenue
+        expr: daily_revenue < 100
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low daily revenue"
+          description: "Daily revenue is ${{ $value }}"
+
+      # High API key usage
+      - alert: HighAPIKeyUsage
+        expr: rate(external_api_calls_total[1h]) > 50
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High external API usage"
+          description: "External API call rate is {{ $value }} per hour"

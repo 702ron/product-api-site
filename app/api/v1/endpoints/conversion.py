@@ -21,6 +21,7 @@ from app.schemas.conversion import (
     FnskuValidationResult, ConversionStats, FnskuSuggestionRequest, FnskuSuggestionResponse,
     ConversionPerformanceMetrics, ConversionHealthCheck, ConversionResult
 )
+from app.schemas.jobs import BulkConversionJobRequest, JobSubmissionResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -239,6 +240,90 @@ async def convert_fnsku_to_asin(
         )
 
 
+@router.post("/bulk-async", response_model=dict)
+async def bulk_convert_fnskus_async(
+    request: BulkConversionJobRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit bulk FNSKU conversion job for asynchronous processing.
+    
+    Features:
+    - Queue-based processing with progress tracking
+    - Bulk discount pricing (15% off for 10+ items)
+    - Parallel processing with rate limiting
+    - Job status monitoring via /api/v1/jobs/status/{job_id}
+    
+    Returns job_id for status tracking instead of immediate results.
+    """
+    from app.core.queue import get_queue, JobPriority
+    
+    try:
+        # Validate input
+        if len(request.fnskus) > 1000:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 1000 FNSKUs allowed per bulk request"
+            )
+        
+        # Calculate cost and check credits
+        base_cost_per_item = 2  # Higher cost for FNSKU conversion
+        item_count = len(request.fnskus)
+        
+        # Apply bulk discount for 10+ items
+        if item_count >= 10:
+            total_cost = max(1, int(item_count * base_cost_per_item * 0.85))
+            bulk_discount_applied = True
+        else:
+            total_cost = item_count * base_cost_per_item
+            bulk_discount_applied = False
+        
+        # Check user has sufficient credits
+        user_credits = await credit_service.get_user_credits(str(current_user.id), db)
+        if user_credits < total_cost:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Insufficient credits. Required: {total_cost}, Available: {user_credits}"
+            )
+        
+        # Prepare job payload
+        payload = {
+            "fnskus": request.fnskus,
+            "total_cost": total_cost,
+            "bulk_discount_applied": bulk_discount_applied
+        }
+        
+        # Submit job to queue
+        queue = await get_queue()
+        job_id = await queue.enqueue(
+            job_type="bulk_conversions",
+            user_id=str(current_user.id),
+            payload=payload,
+            priority=request.priority,
+            max_retries=request.max_retries
+        )
+        
+        # Estimate processing time (rough calculation)
+        estimated_minutes = max(1, item_count // 15)  # ~15 conversions per minute
+        
+        return JobSubmissionResponse(
+            job_id=job_id,
+            message=f"Bulk FNSKU conversion job submitted for {item_count} FNSKUs",
+            estimated_processing_time_minutes=estimated_minutes,
+            status_url=f"/api/v1/jobs/status/{job_id}"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting bulk conversions job: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit bulk conversions job"
+        )
+
+
 @router.post("/bulk", response_model=BulkConversionResponse)
 async def bulk_convert_fnskus(
     request: BulkConversionRequest,
@@ -247,6 +332,8 @@ async def bulk_convert_fnskus(
     db: AsyncSession = Depends(get_db)
 ):
     """
+    DEPRECATED: Use /bulk-async for better performance.
+    
     Convert multiple FNSKUs to ASINs with bulk processing optimization.
     
     Features:
@@ -255,6 +342,9 @@ async def bulk_convert_fnskus(
     - Partial success handling
     - Detailed error reporting per FNSKU
     - Smart caching to reduce external API calls
+    
+    Note: This endpoint processes synchronously and may timeout for large requests.
+    For >50 FNSKUs, use /bulk-async instead.
     """
     start_time = time.time()
     

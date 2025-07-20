@@ -20,6 +20,7 @@ from app.schemas.products import (
     ProductRequest, ProductResponse, BulkProductRequest, BulkProductResponse,
     ProductData, ProductValidationResponse, ProductCacheStats, Marketplace
 )
+from app.schemas.jobs import BulkProductJobRequest, JobSubmissionResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -280,6 +281,92 @@ async def get_product_by_asin(
         )
 
 
+@router.post("/bulk-async", response_model=dict)
+async def get_bulk_products_async(
+    request: BulkProductJobRequest,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Submit bulk product query job for asynchronous processing.
+    
+    Features:
+    - Queue-based processing with progress tracking
+    - Bulk discount pricing (10% off for 10+ items)
+    - Parallel processing with rate limiting
+    - Job status monitoring via /api/v1/jobs/status/{job_id}
+    
+    Returns job_id for status tracking instead of immediate results.
+    """
+    from app.core.queue import get_queue, JobPriority
+    from app.schemas.jobs import JobSubmissionResponse
+    
+    try:
+        # Validate input
+        if len(request.asins) > 1000:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 1000 ASINs allowed per bulk request"
+            )
+        
+        # Calculate cost and check credits
+        base_cost_per_item = 1
+        item_count = len(request.asins)
+        
+        # Apply bulk discount for 10+ items
+        if item_count >= 10:
+            total_cost = max(1, int(item_count * base_cost_per_item * 0.9))
+            bulk_discount_applied = True
+        else:
+            total_cost = item_count * base_cost_per_item
+            bulk_discount_applied = False
+        
+        # Check user has sufficient credits
+        user_credits = await credit_service.get_user_credits(str(current_user.id), db)
+        if user_credits < total_cost:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Insufficient credits. Required: {total_cost}, Available: {user_credits}"
+            )
+        
+        # Prepare job payload
+        payload = {
+            "asins": request.asins,
+            "marketplace": request.marketplace,
+            "total_cost": total_cost,
+            "bulk_discount_applied": bulk_discount_applied
+        }
+        
+        # Submit job to queue
+        queue = await get_queue()
+        job_id = await queue.enqueue(
+            job_type="bulk_products",
+            user_id=str(current_user.id),
+            payload=payload,
+            priority=request.priority,
+            max_retries=request.max_retries
+        )
+        
+        # Estimate processing time (rough calculation)
+        estimated_minutes = max(1, item_count // 20)  # ~20 items per minute
+        
+        return JobSubmissionResponse(
+            job_id=job_id,
+            message=f"Bulk product query job submitted for {item_count} ASINs",
+            estimated_processing_time_minutes=estimated_minutes,
+            status_url=f"/api/v1/jobs/status/{job_id}"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting bulk products job: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit bulk products job"
+        )
+
+
 @router.post("/bulk", response_model=BulkProductResponse)
 async def get_bulk_products(
     request: BulkProductRequest,
@@ -288,6 +375,8 @@ async def get_bulk_products(
     db: AsyncSession = Depends(get_db)
 ):
     """
+    DEPRECATED: Use /bulk-async for better performance.
+    
     Get product data for multiple ASINs with bulk processing optimization.
     
     Features:
@@ -296,7 +385,8 @@ async def get_bulk_products(
     - Partial success handling
     - Detailed error reporting per ASIN
     
-    Note: Bulk operations are processed sequentially to respect API rate limits.
+    Note: This endpoint processes synchronously and may timeout for large requests.
+    For >50 ASINs, use /bulk-async instead.
     """
     start_time = time.time()
     

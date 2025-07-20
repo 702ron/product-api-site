@@ -5,19 +5,18 @@ import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 import logging
 
 from app.core.config import settings
 from app.core.database import init_db, close_db
+from app.monitoring import PrometheusMiddleware, init_metrics, get_metrics
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO if not settings.debug else logging.DEBUG,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
+# Configure enhanced logging
+from app.core.logging_config import setup_logging, get_logger
+setup_logging()
+logger = get_logger("main")
 
 
 @asynccontextmanager
@@ -28,10 +27,23 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
     
+    # Initialize metrics
+    init_metrics()
+    logger.info("Metrics initialized")
+    
+    # Initialize queue system and register handlers
+    from app.core.queue import queue_manager
+    from app.workers.bulk_processor import register_handlers
+    await queue_manager.connect()
+    await register_handlers()
+    logger.info("Queue system initialized")
+    
     yield
     
     # Shutdown
     logger.info("Shutting down...")
+    await queue_manager.disconnect()
+    logger.info("Queue system disconnected")
     await close_db()
     logger.info("Database connections closed")
 
@@ -49,11 +61,14 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=settings.get_cors_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# Prometheus metrics middleware
+app.add_middleware(PrometheusMiddleware)
 
 
 # Security headers middleware
@@ -189,18 +204,29 @@ async def root():
         "message": "Amazon Product Intelligence Platform API",
         "version": settings.version,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "metrics": "/metrics"
     }
 
 
+# Metrics endpoint
+@app.get("/metrics")
+async def metrics():
+    """Prometheus metrics endpoint."""
+    from prometheus_client import CONTENT_TYPE_LATEST
+    return Response(get_metrics(), media_type=CONTENT_TYPE_LATEST)
+
+
 # Include API routers
-from app.api.v1.endpoints import auth, credits, payments, products, conversion
+from app.api.v1.endpoints import auth, credits, payments, products, conversion, jobs, monitoring
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["authentication"])
 app.include_router(credits.router, prefix="/api/v1/credits", tags=["credits"])
 app.include_router(payments.router, prefix="/api/v1/payments", tags=["payments"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["products"])
 app.include_router(conversion.router, prefix="/api/v1/conversion", tags=["conversion"])
+app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["jobs"])
+app.include_router(monitoring.router, prefix="/api/v1/monitoring", tags=["monitoring"])
 
 # Global exception handlers
 from app.core.exception_handlers import add_exception_handlers

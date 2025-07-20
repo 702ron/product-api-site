@@ -8,16 +8,25 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from contextlib import asynccontextmanager
 
-# Database engine with connection pooling
-engine = create_async_engine(
-    settings.database_url,
-    pool_size=settings.database_pool_size,
-    max_overflow=settings.database_max_overflow,
-    pool_timeout=settings.database_pool_timeout,
-    pool_recycle=settings.database_pool_recycle,
-    echo=settings.debug,  # Log SQL queries in debug mode
-)
+# Database engine with conditional pooling (PostgreSQL vs SQLite)
+if "sqlite" in settings.database_url:
+    # SQLite doesn't support connection pooling parameters
+    engine = create_async_engine(
+        settings.database_url,
+        echo=settings.debug,  # Log SQL queries in debug mode
+    )
+else:
+    # PostgreSQL with connection pooling
+    engine = create_async_engine(
+        settings.database_url,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout,
+        pool_recycle=settings.database_pool_recycle,
+        echo=settings.debug,  # Log SQL queries in debug mode
+    )
 
 # Async session factory
 AsyncSessionLocal = sessionmaker(
@@ -59,3 +68,17 @@ async def init_db() -> None:
 async def close_db() -> None:
     """Close database engine."""
     await engine.dispose()
+
+
+@asynccontextmanager
+async def get_db_session():
+    """Get database session for use in workers and background tasks."""
+    session = AsyncSessionLocal()
+    try:
+        yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
