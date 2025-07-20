@@ -163,17 +163,13 @@ async def get_current_user(
     Raises:
         HTTPException: If user not found
     """
-    result = await db.execute(select(User).where(User.supabase_user_id == user_id))
-    user = result.scalar_one_or_none()
-    
-    if user is None:
-        # Try to find by user ID directly (for locally created users)
-        try:
-            user_uuid = uuid.UUID(user_id)
-            result = await db.execute(select(User).where(User.id == user_uuid))
-            user = result.scalar_one_or_none()
-        except ValueError:
-            pass
+    # Find user by ID directly (standard database authentication)
+    try:
+        user_uuid = uuid.UUID(user_id)
+        result = await db.execute(select(User).where(User.id == user_uuid))
+        user = result.scalar_one_or_none()
+    except ValueError:
+        user = None
     
     if user is None:
         raise HTTPException(

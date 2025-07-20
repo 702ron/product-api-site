@@ -102,17 +102,24 @@ async def rate_limiting(request: Request, call_next):
     """Apply rate limiting to API requests."""
     from app.api.deps import rate_limiter
     
-    # Skip rate limiting for health check, root endpoints, and auth endpoints during development
-    skip_paths = ["/health", "/", "/docs", "/redoc", "/openapi.json", "/api/v1/auth/login", "/api/v1/auth/register"]
-    if request.url.path in skip_paths:
+    # Skip rate limiting for development - allow most API calls
+    skip_paths = [
+        "/health", "/", "/docs", "/redoc", "/openapi.json", "/metrics",
+        "/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/auth/logout",
+        "/api/v1/credits/", "/api/v1/monitoring/", "/api/v1/products/",
+        "/api/v1/conversion/", "/api/v1/payments/"
+    ]
+    
+    # Skip rate limiting if path starts with any skip path
+    if any(request.url.path.startswith(skip_path) for skip_path in skip_paths):
         return await call_next(request)
     
     try:
-        # Apply rate limiting with more lenient limits for development
+        # Apply very lenient rate limiting for development
         await rate_limiter.check_rate_limit(
             request, 
-            calls_per_minute=300,  # Increased from default
-            calls_per_second=50    # Increased from default 10
+            calls_per_minute=1000,  # Very high limit for development
+            calls_per_second=100    # Very high limit for development
         )
         response = await call_next(request)
         return response

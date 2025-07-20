@@ -10,6 +10,8 @@ import { Dashboard } from './pages/Dashboard';
 import { ProductQuery } from './pages/ProductQuery';
 import { CreditManagement } from './pages/CreditManagement';
 import { FNSKUConverter } from './pages/FNSKUConverter';
+import PriceMonitoring from './pages/PriceMonitoring';
+import Analytics from './pages/Analytics';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -67,6 +69,26 @@ function App() {
                 <ProtectedRoute>
                   <Layout>
                     <FNSKUConverter />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/monitoring"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <PriceMonitoring />
+                  </Layout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/analytics"
+              element={
+                <ProtectedRoute>
+                  <Layout>
+                    <Analytics />
                   </Layout>
                 </ProtectedRoute>
               }
