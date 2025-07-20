@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../lib/api';
+import { useAdmin } from '../contexts/AdminContext';
 import { Loader2, ShieldX } from 'lucide-react';
 
 interface AdminRouteProps {
@@ -10,62 +10,31 @@ interface AdminRouteProps {
 
 export function AdminRoute({ children }: AdminRouteProps) {
   const { user, loading: authLoading } = useAuth();
+  const { isAdmin, isLoading: adminLoading, checkAdminStatus } = useAdmin();
   const location = useLocation();
-  const [adminLoading, setAdminLoading] = useState(true);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [adminError, setAdminError] = useState<string | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const checkAdminAccess = async () => {
+    const verifyAdminAccess = async () => {
       if (!user || authLoading) {
         return;
       }
 
-      try {
-        setAdminLoading(true);
+      // Use the shared admin status check
+      await checkAdminStatus();
+      
+      // Set error if user is not admin after check completes
+      if (!adminLoading && !isAdmin) {
+        setAdminError('Admin access required. You do not have permission to access this area.');
+      } else {
         setAdminError(null);
-        
-        // Try to access an admin endpoint to verify admin status
-        await api.get('/admin/users?limit=1');
-        
-        if (isMounted) {
-          setIsAdmin(true);
-        }
-      } catch (error: any) {
-        if (isMounted) {
-          setIsAdmin(false);
-          
-          if (error.response?.status === 403) {
-            setAdminError('Admin access required. You do not have permission to access this area.');
-          } else if (error.response?.status === 401) {
-            setAdminError('Authentication failed. Please login again.');
-          } else if (error.response?.status === 500 && 
-                     error.response?.data?.details?.error_type === 'JWTError') {
-            setAdminError('Invalid authentication token. Please login again.');
-            // Clear invalid tokens
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
-          } else {
-            setAdminError('Unable to verify admin access. Please try again.');
-          }
-        }
-      } finally {
-        if (isMounted) {
-          setAdminLoading(false);
-        }
       }
     };
 
-    checkAdminAccess();
+    verifyAdminAccess();
+  }, [user, authLoading, checkAdminStatus, isAdmin, adminLoading]);
 
-    return () => {
-      isMounted = false;
-    };
-  }, [user, authLoading]);
-
-  // Still loading authentication
+  // Still loading authentication or admin status
   if (authLoading || adminLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">

@@ -2,6 +2,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
+import { AdminProvider } from './contexts/AdminContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AdminRoute } from './components/AdminRoute';
 import { Layout } from './components/Layout';
@@ -30,7 +31,8 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <Router>
+        <AdminProvider>
+          <Router>
           <Routes>
             {/* Public routes */}
             <Route path="/login" element={<LoginForm />} />
@@ -113,7 +115,8 @@ function App() {
             {/* Homepage route */}
             <Route path="/" element={<Homepage />} />
           </Routes>
-        </Router>
+          </Router>
+        </AdminProvider>
       </AuthProvider>
     </QueryClientProvider>
   );

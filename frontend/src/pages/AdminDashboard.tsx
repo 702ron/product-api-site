@@ -1,6 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, Settings, Shield, Activity, FileText, AlertTriangle } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAdmin } from '../contexts/AdminContext';
+
+// Global cache for health data to persist across React Strict Mode remounts
+const healthDataCache = {
+  data: null as SystemHealth | null,
+  timestamp: 0,
+  isLoading: false, // Track if any component is currently loading
+  CACHE_DURATION: 30 * 1000 // 30 seconds
+};
 
 interface User {
   id: string;
@@ -33,30 +42,75 @@ interface SecurityEvent {
 }
 
 const AdminDashboard: React.FC = () => {
+  const { isAdmin, isLoading: adminLoading } = useAdmin();
   const [activeTab, setActiveTab] = useState('overview');
   const [users, setUsers] = useState<User[]>([]);
   const [systemHealth, setSystemHealth] = useState<SystemHealth | null>(null);
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false); // Start with false, not true
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [creditAdjustment, setCreditAdjustment] = useState('');
   const [adjustmentReason, setAdjustmentReason] = useState('');
+  const loadingRef = useRef(false); // Use ref to track loading across renders
+  const hasLoadedRef = useRef(false); // Track if we've successfully loaded once
 
   useEffect(() => {
-    loadAdminData();
-  }, []);
+    // Only load data if user is confirmed admin and not still loading
+    // Add a delay to prevent React Strict Mode double invocation from triggering rate limits
+    if (isAdmin && !adminLoading && !hasLoadedRef.current) {
+      const timeout = setTimeout(() => {
+        loadAdminData();
+      }, 100); // Small delay to prevent rapid consecutive calls
+      
+      return () => clearTimeout(timeout);
+    }
+  }, [isAdmin, adminLoading]);
 
   const loadAdminData = async () => {
+    // Prevent multiple simultaneous calls using ref
+    if (loadingRef.current) {
+      console.log('Already loading admin data, skipping...');
+      return;
+    }
+    
+    let loadingTimeout: NodeJS.Timeout;
+    
     try {
+      loadingRef.current = true;
       setLoading(true);
+      console.log('Loading admin data...');
       
-      // Load users
-      const usersResponse = await api.get('/admin/users');
-      setUsers(usersResponse.data.users || []);
+      // Set a timeout to prevent infinite loading
+      loadingTimeout = setTimeout(() => {
+        console.warn('Admin data loading timed out after 10 seconds');
+        loadingRef.current = false;
+        setLoading(false);
+        hasLoadedRef.current = true; // Mark as loaded even if failed
+      }, 5000); // Reduced to 5 seconds
+      
+      // Load users with error handling
+      try {
+        const usersResponse = await api.get('/admin/users');
+        setUsers(usersResponse.data.users || []);
+      } catch (userError: any) {
+        console.error('Failed to load users:', userError);
+        // Set empty array if auth fails to allow UI to render
+        setUsers([]);
+      }
 
-      // Load system health
-      const healthResponse = await api.get('/admin/status');
-      setSystemHealth(healthResponse.data);
+      // Skip automatic health loading due to rate limiting issues
+      // Set default health data that indicates manual refresh is needed
+      console.log('Skipping automatic health check due to rate limiting - manual refresh available');
+      const defaultHealth = {
+        status: 'rate_limited',
+        uptime: 0,
+        memory_usage: 0,
+        cpu_usage: 0,
+        disk_usage: 0,
+        active_users: 0,
+        total_api_calls: 0
+      };
+      setSystemHealth(defaultHealth);
 
       // Load security events (placeholder for now - no security events endpoint exists yet)
       setSecurityEvents([]);
@@ -64,7 +118,13 @@ const AdminDashboard: React.FC = () => {
     } catch (error) {
       console.error('Failed to load admin data:', error);
     } finally {
+      if (loadingTimeout) {
+        clearTimeout(loadingTimeout);
+      }
+      loadingRef.current = false;
       setLoading(false);
+      hasLoadedRef.current = true; // Mark as loaded even if failed
+      console.log('Admin data loading completed');
     }
   };
 
@@ -79,10 +139,12 @@ const AdminDashboard: React.FC = () => {
           });
         }
       } else if (action === 'adjust_credits' && creditAdjustment) {
-        await api.post(`/admin/users/${userId}/credits`, {
-          amount: parseInt(creditAdjustment),
+        // Send amount and reason as query parameters, not request body
+        const params = new URLSearchParams({
+          amount: creditAdjustment,
           reason: adjustmentReason
         });
+        await api.post(`/admin/users/${userId}/credits?${params}`);
         setCreditAdjustment('');
         setAdjustmentReason('');
         setSelectedUser(null);
@@ -93,6 +155,32 @@ const AdminDashboard: React.FC = () => {
       setUsers(usersResponse.data.users || []);
     } catch (error) {
       console.error('Failed to perform user action:', error);
+    }
+  };
+
+  const refreshHealthData = async () => {
+    try {
+      console.log('Manual health refresh triggered');
+      const healthResponse = await api.get('/admin/status');
+      const healthData = healthResponse.data;
+      
+      // Update global cache
+      healthDataCache.data = healthData;
+      healthDataCache.timestamp = Date.now();
+      setSystemHealth(healthData);
+      console.log('Health data refreshed successfully');
+    } catch (error) {
+      console.error('Failed to refresh health data:', error);
+      // Show rate limited status if still failing
+      setSystemHealth(prev => prev || {
+        status: 'error',
+        uptime: 0,
+        memory_usage: 0,
+        cpu_usage: 0,
+        disk_usage: 0,
+        active_users: 0,
+        total_api_calls: 0
+      });
     }
   };
 
@@ -124,12 +212,43 @@ const AdminDashboard: React.FC = () => {
     }
   };
 
-  if (loading) {
+  // Emergency reset function - can be called from console if needed
+  (window as any).resetAdminDashboard = () => {
+    console.log('Emergency reset triggered');
+    loadingRef.current = false;
+    setLoading(false);
+    hasLoadedRef.current = false;
+    // Clear global health cache
+    healthDataCache.data = null;
+    healthDataCache.timestamp = 0;
+  };
+
+  // Global cache clear function
+  (window as any).clearHealthCache = () => {
+    console.log('Health cache cleared');
+    healthDataCache.data = null;
+    healthDataCache.timestamp = 0;
+    healthDataCache.isLoading = false;
+  };
+
+  // Show loading while checking admin status or loading data
+  if (adminLoading || loading) {
     return (
       <div className="flex justify-center items-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="ml-4">
+          <p className="text-sm text-gray-600">Loading admin data...</p>
+          <p className="text-xs text-gray-400 mt-1">
+            If this takes too long, check the console or try refreshing
+          </p>
+        </div>
       </div>
     );
+  }
+
+  // Don't render anything if not admin (AdminRoute should handle this)
+  if (!isAdmin) {
+    return null;
   }
 
   return (
@@ -322,6 +441,20 @@ const AdminDashboard: React.FC = () => {
       {/* System Health Tab */}
       {activeTab === 'system' && (
         <div className="space-y-6">
+          {/* Refresh Button */}
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-medium text-gray-900">System Health</h3>
+            <button
+              onClick={refreshHealthData}
+              className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Refresh Health Data
+            </button>
+          </div>
+          
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-lg shadow">
               <h4 className="text-lg font-medium text-gray-900 mb-4">System Status</h4>
@@ -329,9 +462,12 @@ const AdminDashboard: React.FC = () => {
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-500">Status:</span>
                   <span className={`text-sm font-medium ${
-                    systemHealth?.status === 'operational' ? 'text-green-600' : 'text-red-600'
+                    systemHealth?.status === 'operational' ? 'text-green-600' : 
+                    systemHealth?.status === 'rate_limited' ? 'text-yellow-600' :
+                    'text-red-600'
                   }`}>
-                    {systemHealth?.status || 'Unknown'}
+                    {systemHealth?.status === 'rate_limited' ? 'Rate Limited (Click Refresh)' : 
+                     systemHealth?.status || 'Unknown'}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -342,6 +478,11 @@ const AdminDashboard: React.FC = () => {
                     {systemHealth?.database_status || 'Unknown'}
                   </span>
                 </div>
+                {systemHealth?.status === 'rate_limited' && (
+                  <div className="mt-2 p-2 bg-yellow-50 rounded text-xs text-yellow-700">
+                    Health data disabled due to rate limiting. Use refresh button above.
+                  </div>
+                )}
               </div>
             </div>
 

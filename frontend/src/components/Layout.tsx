@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { api } from '../lib/api';
+import { useAdmin } from '../contexts/AdminContext';
 import {
   Menu,
   X,
@@ -22,36 +22,10 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuth();
+  const { isAdmin } = useAdmin();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-
-  useEffect(() => {
-    const checkAdminStatus = async () => {
-      if (!user) {
-        setIsAdmin(false);
-        return;
-      }
-
-      try {
-        // Test admin access by trying to access admin users endpoint
-        await api.get('/admin/users?limit=1');
-        setIsAdmin(true);
-      } catch (error: any) {
-        // If we get a 403 or 401, user is not an admin
-        if (error.response?.status === 403 || error.response?.status === 401) {
-          setIsAdmin(false);
-        } else {
-          // For other errors (500, network issues), assume not admin to be safe
-          setIsAdmin(false);
-          console.warn('Admin status check failed:', error.message);
-        }
-      }
-    };
-
-    checkAdminStatus();
-  }, [user]);
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: Home },
