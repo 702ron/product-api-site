@@ -265,3 +265,90 @@ class ProductCacheStats(BaseModel):
     average_cache_age_hours: float = Field(..., description="Average cache age in hours")
     expired_entries: int = Field(..., description="Number of expired entries")
     marketplaces: Dict[str, int] = Field(..., description="Products per marketplace")
+
+
+# Multi-Input Product Lookup Schemas
+
+class MultiLookupRequest(BaseModel):
+    """Schema for multi-input product lookup request."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    
+    input_value: str = Field(..., min_length=1, max_length=50, description="Product identifier (ASIN, FNSKU, or GTIN/UPC)")
+    marketplace: Marketplace = Field(default=Marketplace.US, description="Amazon marketplace")
+    manual_type: Optional[str] = Field(None, description="Manual input type override (asin, fnsku, gtin_upc)")
+    include_reviews: bool = Field(default=False, description="Include customer reviews")
+    include_offers: bool = Field(default=False, description="Include seller offers")
+    include_images: bool = Field(default=True, description="Include product images")
+
+
+class MultiLookupResponse(BaseModel):
+    """Schema for multi-input product lookup response."""
+    status: str = Field(..., description="Response status")
+    input_type: str = Field(..., description="Detected/used input type")
+    input_value: str = Field(..., description="Original input value")
+    credits_used: int = Field(..., description="Credits consumed for this lookup")
+    processing_time_ms: Optional[int] = Field(None, description="Processing time in milliseconds")
+    
+    # Product data (if successful)
+    product: Optional[ProductData] = Field(None, description="Product data")
+    
+    # Conversion data (for FNSKU)
+    conversion_data: Optional[Dict[str, Any]] = Field(None, description="FNSKU to ASIN conversion data")
+    
+    # Detection metadata
+    detection_confidence: float = Field(default=1.0, description="Input type detection confidence")
+    validation_warnings: List[str] = Field(default_factory=list, description="Validation warnings")
+
+
+# Product Search Schemas
+
+class ProductSearchRequest(BaseModel):
+    """Schema for product name search request."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    
+    search_term: str = Field(..., min_length=3, max_length=200, description="Product search term")
+    marketplace: Marketplace = Field(default=Marketplace.US, description="Amazon marketplace")
+    page: int = Field(default=1, ge=1, le=100, description="Page number (1-based)")
+    max_page: int = Field(default=1, ge=1, le=5, description="Maximum pages to retrieve (max 5)")
+
+
+class ProductSearchResult(BaseModel):
+    """Schema for individual search result."""
+    asin: str = Field(..., description="Product ASIN")
+    title: str = Field(..., description="Product title")
+    image: Optional[str] = Field(None, description="Product image URL")
+    price: Optional[Dict[str, Any]] = Field(None, description="Price information")
+    rating: Optional[Dict[str, Any]] = Field(None, description="Rating information")
+    availability: Optional[str] = Field(None, description="Availability status")
+    sponsored: bool = Field(default=False, description="Whether result is sponsored")
+    position: int = Field(..., description="Position in original page")
+    page: int = Field(..., description="Page number this result came from")
+    position_overall: Optional[int] = Field(None, description="Overall position across all pages")
+
+
+class ProductSearchPagination(BaseModel):
+    """Schema for search pagination metadata."""
+    current_page: int = Field(..., description="Current page number")
+    total_pages: int = Field(..., description="Total pages available")
+    results_per_page: int = Field(..., description="Results per page")
+    total_results: Optional[int] = Field(None, description="Total results available")
+    has_next_page: bool = Field(..., description="Whether next page exists")
+    has_previous_page: bool = Field(..., description="Whether previous page exists")
+
+
+class ProductSearchResponse(BaseModel):
+    """Schema for product search response."""
+    status: str = Field(..., description="Response status")
+    search_term: str = Field(..., description="Original search term")
+    marketplace: str = Field(..., description="Marketplace searched")
+    credits_used: int = Field(..., description="Credits consumed for this search")
+    pages_retrieved: int = Field(..., description="Number of pages actually retrieved")
+    processing_time_ms: Optional[int] = Field(None, description="Processing time in milliseconds")
+    
+    # Search results
+    results: List[ProductSearchResult] = Field(default_factory=list, description="Search results")
+    pagination: ProductSearchPagination = Field(..., description="Pagination metadata")
+    
+    # Search metadata
+    total_results_returned: int = Field(..., description="Total results returned")
+    search_suggestions: List[str] = Field(default_factory=list, description="Alternative search suggestions")

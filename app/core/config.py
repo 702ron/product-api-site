@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     amazon_api_key: str = Field(default="placeholder-api-key", env="AMAZON_API_KEY")
     amazon_api_url: str = Field(default="https://api.asindataapi.com/request", env="AMAZON_API_URL")
     
+    # ASIN Data API (TrajectData)
+    trajectdata_api_key: str = Field(default="placeholder-trajectdata-key", env="TRAJECTDATA_API_KEY")
+    
+    # FNSKU Conversion API
+    fnsku_api_key: str = Field(default="placeholder-fnsku-key", env="FNSKU_API_KEY")
+    fnsku_api_url: str = Field(default="https://ato.fnskutoasin.com", env="FNSKU_API_URL")
+    
     # CORS
     cors_origins: str = Field(
         default="http://localhost:3000,http://localhost:3001,https://yourdomain.com",

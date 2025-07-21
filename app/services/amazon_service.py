@@ -47,9 +47,9 @@ class AmazonService:
         # self.redis_client: Optional[aioredis.Redis] = None  # Temporarily disabled
         self.rate_limit_calls = {}  # In-memory rate limiting
         
-        # API configuration
-        self.api_key = settings.amazon_api_key
-        self.api_url = settings.amazon_api_url
+        # API configuration - Using TrajectData ASIN Data API
+        self.api_key = settings.trajectdata_api_key
+        self.api_url = "https://api.asindataapi.com/request"
         
         # Rate limiting configuration
         self.max_calls_per_minute = 60
@@ -255,27 +255,112 @@ class AmazonService:
             await db.rollback()
             return False
     
-    async def _call_trajectdata_api(
-        self,
-        asin: str,
-        marketplace: str,
-        include_reviews: bool = False
-    ) -> Dict[str, Any]:
+    async def _call_trajectdata_api(self, *args, **kwargs) -> Dict[str, Any]:
         """
-        Call TrajectData ASIN Data API for product data.
+        Call TrajectData ASIN Data API - supports both parameter dict and individual arguments.
         
-        Args:
-            asin: Product ASIN
-            marketplace: Amazon marketplace
-            include_reviews: Include review data
-            
+        Can be called as:
+        - _call_trajectdata_api(asin, marketplace, include_reviews=False)
+        - _call_trajectdata_api(params_dict)
+        
         Returns:
             API response data
             
         Raises:
             ExternalAPIError: If API call fails
         """
-        # Map marketplace to amazon domain
+        # Handle different calling patterns
+        if len(args) == 1 and isinstance(args[0], dict):
+            # Called with parameters dictionary
+            params = args[0].copy()
+        elif len(args) >= 2:
+            # Called with individual arguments (asin, marketplace, include_reviews)
+            asin, marketplace = args[0], args[1]
+            include_reviews = args[2] if len(args) > 2 else kwargs.get('include_reviews', False)
+            
+            # Map marketplace to amazon domain
+            domain_mapping = {
+                "US": "amazon.com",
+                "UK": "amazon.co.uk", 
+                "DE": "amazon.de",
+                "FR": "amazon.fr",
+                "IT": "amazon.it",
+                "ES": "amazon.es",
+                "CA": "amazon.ca",
+                "JP": "amazon.co.jp",
+                "AU": "amazon.com.au"
+            }
+            
+            params = {
+                "type": "product",
+                "amazon_domain": domain_mapping.get(marketplace, "amazon.com"),
+                "asin": asin
+            }
+            
+            if include_reviews:
+                params["include_reviews"] = "true"
+        else:
+            raise ValueError("Invalid arguments: expected either params dict or (asin, marketplace)")
+        
+        # Ensure API key is included
+        params["api_key"] = self.api_key
+        
+        try:
+            response = await self.http_client.get(self.api_url, params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Check for API errors in response
+            if data.get("error"):
+                error_msg = data.get("error", {}).get("message", "Unknown API error")
+                raise ExternalAPIError(f"API error: {error_msg}")
+            
+            # For backward compatibility - check for specific response patterns
+            if "asin" in params and "product" not in data:
+                asin = params["asin"]
+                marketplace = params.get("amazon_domain", "amazon.com")
+                raise ProductNotFoundError(f"Product {asin} not found")
+            
+            return data
+            
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise ProductNotFoundError("Product not found")
+            elif e.response.status_code == 429:
+                raise RateLimitExceededError("External API rate limit exceeded")
+            else:
+                error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
+                logger.error(f"External API HTTP error: {error_msg}")
+                
+                # For ASIN lookups, fall back to mock data
+                if "asin" in params:
+                    asin = params["asin"]
+                    marketplace_domain = params.get("amazon_domain", "amazon.com")
+                    # Convert domain back to marketplace code
+                    marketplace = "US"  # Default fallback
+                    for mk, domain in {"US": "amazon.com", "UK": "amazon.co.uk"}.items():
+                        if domain == marketplace_domain:
+                            marketplace = mk
+                            break
+                    logger.warning(f"Falling back to mock data for ASIN {asin}")
+                    return self._get_mock_data(asin, marketplace)
+                else:
+                    raise ExternalAPIError(f"API request failed: {error_msg}")
+        except httpx.RequestError as e:
+            logger.error(f"External API request error: {str(e)}")
+            
+            # For ASIN lookups, fall back to mock data
+            if "asin" in params:
+                asin = params["asin"]
+                marketplace = "US"  # Default fallback
+                logger.warning(f"Network error, falling back to mock data for ASIN {asin}")
+                return self._get_mock_data(asin, marketplace)
+            else:
+                raise ExternalAPIError(f"Network error: {str(e)}")
+    
+    def _get_amazon_domain(self, marketplace: str) -> str:
+        """Get Amazon domain for marketplace."""
         domain_mapping = {
             "US": "amazon.com",
             "UK": "amazon.co.uk", 
@@ -287,39 +372,7 @@ class AmazonService:
             "JP": "amazon.co.jp",
             "AU": "amazon.com.au"
         }
-        
-        params = {
-            "api_key": self.api_key,
-            "type": "product",
-            "amazon_domain": domain_mapping.get(marketplace, "amazon.com"),
-            "asin": asin
-        }
-        
-        if include_reviews:
-            params["include_reviews"] = "true"
-        
-        try:
-            response = await self.http_client.get(self.api_url, params=params)
-            response.raise_for_status()
-            
-            data = response.json()
-            
-            if "product" not in data:
-                raise ProductNotFoundError(f"Product {asin} not found in {marketplace}")
-            
-            return data
-            
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise ProductNotFoundError(f"Product {asin} not found")
-            elif e.response.status_code == 429:
-                raise RateLimitExceededError("External API rate limit exceeded")
-            else:
-                logger.warning(f"External API error {e.response.status_code}, falling back to mock data")
-                return self._get_mock_data(asin, marketplace)
-        except httpx.RequestError as e:
-            logger.warning(f"External API request error: {str(e)}, falling back to mock data")
-            return self._get_mock_data(asin, marketplace)
+        return domain_mapping.get(marketplace, "amazon.com")
     
     def _parse_api_data(self, data: Dict[str, Any], marketplace: str) -> ProductData:
         """
@@ -589,6 +642,159 @@ class AmazonService:
                 ]
             }
         }
+    
+    async def get_product_by_barcode(
+        self,
+        db: AsyncSession,
+        barcode: str,
+        marketplace: str,
+        include_reviews: bool = False,
+        use_cache: bool = True
+    ) -> ProductData:
+        """
+        Get product data by GTIN/UPC barcode using ASIN Data API.
+        
+        Args:
+            db: Database session
+            barcode: GTIN/UPC barcode
+            marketplace: Amazon marketplace
+            include_reviews: Include review data
+            use_cache: Use cached data if available
+            
+        Returns:
+            Product data
+            
+        Raises:
+            ProductNotFoundError: If product not found
+            ExternalAPIError: If API call fails
+        """
+        logger.info(f"Looking up product by barcode: {barcode} in marketplace {marketplace}")
+        
+        # Check rate limit
+        if not await self._check_rate_limit(marketplace):
+            raise RateLimitExceededError(f"Rate limit exceeded for marketplace {marketplace}")
+        
+        # Try to find cached product by barcode (we could extend cache to include barcode lookups)
+        # For now, we'll just call the API directly
+        
+        try:
+            # Prepare API request for barcode lookup
+            api_params = {
+                "api_key": settings.TRAJECTDATA_API_KEY,
+                "type": "product",
+                "gtin": barcode,  # ASIN Data API supports GTIN lookup
+                "amazon_domain": self._get_amazon_domain(marketplace),
+                "output": "json"
+            }
+            
+            if include_reviews:
+                api_params["include"] = "reviews"
+            
+            # Call external API
+            response_data = await self._call_trajectdata_api(api_params)
+            
+            if not response_data or "product" not in response_data:
+                raise ProductNotFoundError(f"No product found for barcode {barcode}")
+            
+            # Parse and return product data
+            product_data = self._parse_api_data(response_data, marketplace)
+            
+            # Cache the result using the ASIN as key for future lookups
+            if use_cache and product_data.asin:
+                await self._cache_product(
+                    db=db,
+                    asin=product_data.asin,
+                    marketplace=marketplace,
+                    data=response_data
+                )
+            
+            logger.info(f"Successfully looked up product by barcode {barcode}: {product_data.asin}")
+            return product_data
+            
+        except ProductNotFoundError:
+            raise
+        except Exception as e:
+            logger.error(f"Error looking up product by barcode {barcode}: {str(e)}")
+            raise ExternalAPIError(f"Barcode lookup failed: {str(e)}")
+    
+    async def search_products(
+        self,
+        search_term: str,
+        marketplace: str,
+        page: int = 1,
+        max_page: int = 1,
+        include_reviews: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Search for products by name using ASIN Data API.
+        
+        Args:
+            search_term: Product search term
+            marketplace: Amazon marketplace
+            page: Starting page number
+            max_page: Maximum pages to retrieve (max 5)
+            include_reviews: Include review data
+            
+        Returns:
+            Search results with pagination metadata
+            
+        Raises:
+            ExternalAPIError: If API call fails
+        """
+        logger.info(f"Searching products: '{search_term}' in marketplace {marketplace}, page {page}, max_page {max_page}")
+        
+        # Validate pagination parameters
+        max_page = min(max_page, 5)  # API limit
+        if page < 1:
+            page = 1
+        
+        # Check rate limit
+        if not await self._check_rate_limit(marketplace):
+            raise RateLimitExceededError(f"Rate limit exceeded for marketplace {marketplace}")
+        
+        try:
+            # Prepare API request for search
+            api_params = {
+                "api_key": settings.TRAJECTDATA_API_KEY,
+                "type": "search",
+                "search_term": search_term,
+                "amazon_domain": self._get_amazon_domain(marketplace),
+                "page": page,
+                "output": "json"
+            }
+            
+            if max_page > 1:
+                api_params["max_page"] = max_page
+            
+            if include_reviews:
+                api_params["include"] = "reviews"
+            
+            # Call external API
+            response_data = await self._call_trajectdata_api(api_params)
+            
+            if not response_data:
+                raise ExternalAPIError("Empty search response from API")
+            
+            # Parse search results
+            search_results = response_data.get("search_results", [])
+            pagination = response_data.get("pagination", {})
+            
+            logger.info(f"Search completed: {len(search_results)} results found")
+            
+            return {
+                "search_results": search_results,
+                "pagination": pagination,
+                "request_params": {
+                    "search_term": search_term,
+                    "marketplace": marketplace,
+                    "page": page,
+                    "max_page": max_page
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Error searching products: {str(e)}")
+            raise ExternalAPIError(f"Product search failed: {str(e)}")
     
     async def close(self):
         """Close HTTP client and Redis connection."""

@@ -16,9 +16,12 @@ from app.services.credit_service import credit_service
 from app.services.amazon_service import (
     amazon_service, ProductNotFoundError, RateLimitExceededError, ExternalAPIError
 )
+from app.services.input_detection_service import input_detector, InputType
+from app.services.fnsku_service import fnsku_service
 from app.schemas.products import (
     ProductRequest, ProductResponse, BulkProductRequest, BulkProductResponse,
-    ProductData, ProductValidationResponse, ProductCacheStats, Marketplace
+    ProductData, ProductValidationResponse, ProductCacheStats, Marketplace,
+    MultiLookupRequest, MultiLookupResponse, ProductSearchRequest, ProductSearchResponse
 )
 from app.schemas.jobs import BulkProductJobRequest, JobSubmissionResponse
 
@@ -650,4 +653,499 @@ async def cleanup_expired_cache(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error cleaning up cache"
+        )
+
+
+@router.post("/multi-lookup", response_model=MultiLookupResponse)
+async def multi_input_lookup(
+    request: MultiLookupRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Multi-input product lookup supporting ASIN, FNSKU, and GTIN/UPC.
+    
+    Automatically detects input type and routes to appropriate API:
+    - ASIN: Direct product lookup (1 credit)
+    - FNSKU: Two-step conversion FNSKU→ASIN→Product (10 credits)
+    - GTIN/UPC: Barcode-based product lookup (1 credit)
+    
+    Features:
+    - Smart input type detection with manual override
+    - Variable credit costs based on complexity
+    - Comprehensive error handling with credit refunds
+    - Detailed logging and monitoring
+    """
+    start_time = time.time()
+    detection_result = None
+    credits_used = 0
+    conversion_data = None
+    
+    try:
+        # Detect input type (with manual override if specified)
+        if request.manual_type:
+            try:
+                manual_input_type = InputType(request.manual_type)
+                detection_result = input_detector.validate_manual_override(
+                    request.input_value, manual_input_type
+                )
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Manual type override invalid: {str(e)}"
+                )
+        else:
+            detection_result = input_detector.detect_input_type(request.input_value)
+        
+        # Check for validation errors
+        if detection_result.validation_errors:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Input validation failed: {', '.join(detection_result.validation_errors)}"
+            )
+        
+        # Get credit cost for this input type
+        operation_cost = detection_result.credit_cost
+        
+        # Apply additional costs for extra features
+        if request.include_reviews:
+            operation_cost += 1
+        if request.include_offers:
+            operation_cost += 1
+        
+        # Check and deduct credits first
+        await credit_service.deduct_credits(
+            db=db,
+            user_id=current_user.id,
+            operation=f"{detection_result.input_type.value}_lookup",
+            cost=operation_cost,
+            description=f"Multi-input lookup for {detection_result.input_type.value}: {detection_result.input_value}",
+            extra_data={
+                "input_type": detection_result.input_type.value,
+                "input_value": detection_result.input_value,
+                "marketplace": request.marketplace.value,
+                "detection_confidence": detection_result.confidence,
+                "include_reviews": request.include_reviews,
+                "include_offers": request.include_offers
+            }
+        )
+        
+        credits_used = operation_cost
+        product_data = None
+        
+        # Route to appropriate lookup method based on input type
+        if detection_result.input_type == InputType.ASIN:
+            # Direct ASIN lookup
+            product_data = await amazon_service.get_product_data(
+                db=db,
+                asin=detection_result.input_value,
+                marketplace=request.marketplace.value,
+                include_reviews=request.include_reviews,
+                use_cache=True
+            )
+            
+        elif detection_result.input_type == InputType.FNSKU:
+            # Two-step FNSKU conversion
+            logger.info(f"Converting FNSKU {detection_result.input_value} to ASIN")
+            
+            # First step: Convert FNSKU to ASIN
+            conversion_result = await fnsku_service.convert_fnsku_to_asin(
+                db=db,
+                fnsku=detection_result.input_value,
+                marketplace=request.marketplace.value
+            )
+            
+            if not conversion_result.asin:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Could not convert FNSKU {detection_result.input_value} to ASIN"
+                )
+            
+            # Store conversion data for response
+            conversion_data = {
+                "fnsku": detection_result.input_value,
+                "asin": conversion_result.asin,
+                "confidence": conversion_result.confidence.value,
+                "method": conversion_result.method.value,
+                "from_cache": conversion_result.from_cache
+            }
+            
+            # Second step: Get product data using converted ASIN
+            product_data = await amazon_service.get_product_data(
+                db=db,
+                asin=conversion_result.asin,
+                marketplace=request.marketplace.value,
+                include_reviews=request.include_reviews,
+                use_cache=True
+            )
+            
+        elif detection_result.input_type == InputType.GTIN_UPC:
+            # GTIN/UPC barcode lookup
+            logger.info(f"Looking up product by GTIN/UPC {detection_result.input_value}")
+            
+            # Use ASIN Data API's barcode lookup capability
+            product_data = await amazon_service.get_product_by_barcode(
+                db=db,
+                barcode=detection_result.input_value,
+                marketplace=request.marketplace.value,
+                include_reviews=request.include_reviews,
+                use_cache=True
+            )
+        
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported input type: {detection_result.input_type}"
+            )
+        
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log successful query
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type=f"{detection_result.input_type.value}_lookup",
+            query_input=detection_result.input_value,
+            credits_deducted=credits_used,
+            status="success",
+            response_time_ms=response_time_ms,
+            api_response_summary={
+                "input_type": detection_result.input_type.value,
+                "input_value": detection_result.input_value,
+                "asin": product_data.asin if product_data else None,
+                "title": product_data.title if product_data else None,
+                "brand": product_data.brand if product_data else None,
+                "price": product_data.price.amount if product_data and product_data.price else None,
+                "rating": product_data.rating.value if product_data and product_data.rating else None,
+                "data_source": product_data.data_source.value if product_data else None,
+                "detection_confidence": detection_result.confidence,
+                "conversion_used": conversion_data is not None
+            }
+        )
+        
+        return MultiLookupResponse(
+            status="success",
+            input_type=detection_result.input_type.value,
+            input_value=detection_result.input_value,
+            credits_used=credits_used,
+            processing_time_ms=response_time_ms,
+            product=product_data,
+            conversion_data=conversion_data,
+            detection_confidence=detection_result.confidence,
+            validation_warnings=detection_result.validation_errors or []
+        )
+        
+    except InsufficientCreditsError as e:
+        response_time_ms = int((time.time() - start_time) * 1000)
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type=f"{detection_result.input_type.value}_lookup" if detection_result else "multi_lookup",
+            query_input=request.input_value,
+            credits_deducted=0,
+            status="error",
+            response_time_ms=response_time_ms,
+            error_details={"error": "insufficient_credits", "message": str(e)}
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(e)
+        )
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions (validation errors, etc.)
+        raise
+        
+    except ProductNotFoundError as e:
+        # Refund credits for product not found
+        if credits_used > 0:
+            await credit_service.refund_credits(
+                db=db,
+                user_id=current_user.id,
+                amount=credits_used,
+                reason="Product not found",
+                original_operation=f"{detection_result.input_type.value}_lookup" if detection_result else "multi_lookup",
+                extra_data={
+                    "input_type": detection_result.input_type.value if detection_result else "unknown",
+                    "input_value": request.input_value,
+                    "marketplace": request.marketplace.value
+                }
+            )
+        
+        response_time_ms = int((time.time() - start_time) * 1000)
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type=f"{detection_result.input_type.value}_lookup" if detection_result else "multi_lookup",
+            query_input=request.input_value,
+            credits_deducted=0,  # Credits refunded
+            status="error",
+            response_time_ms=response_time_ms,
+            error_details={"error": "product_not_found", "message": str(e)}
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Product not found: {str(e)}. Credits have been refunded."
+        )
+        
+    except Exception as e:
+        # Refund credits for unexpected errors
+        if credits_used > 0:
+            await credit_service.refund_credits(
+                db=db,
+                user_id=current_user.id,
+                amount=credits_used,
+                reason="Lookup operation failed",
+                original_operation=f"{detection_result.input_type.value}_lookup" if detection_result else "multi_lookup",
+                extra_data={
+                    "input_type": detection_result.input_type.value if detection_result else "unknown",
+                    "input_value": request.input_value,
+                    "error": str(e)
+                }
+            )
+        
+        response_time_ms = int((time.time() - start_time) * 1000)
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type=f"{detection_result.input_type.value}_lookup" if detection_result else "multi_lookup",
+            query_input=request.input_value,
+            credits_deducted=0,  # Credits refunded
+            status="error",
+            response_time_ms=response_time_ms,
+            error_details={"error": "processing_error", "message": str(e)}
+        )
+        
+        logger.error(f"Unexpected error in multi-lookup: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Lookup operation failed. Credits have been refunded."
+        )
+
+
+@router.post("/search", response_model=ProductSearchResponse)
+async def search_products(
+    request: ProductSearchRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search for products by name with pagination support.
+    
+    Returns a list of matching products with key details (title, ASIN, price, rating, image).
+    Users can then select a specific ASIN to get full product details via the regular ASIN lookup.
+    
+    Features:
+    - Paginated search results (1 credit per page)
+    - Maximum 5 pages per request (API limitation)
+    - Search suggestions for better results
+    - Comprehensive product list with key details
+    
+    Credit cost: 1 credit per page retrieved (variable total based on pages requested)
+    """
+    start_time = time.time()
+    credits_used = 0
+    pages_retrieved = 0
+    
+    try:
+        # Validate and cap pagination parameters
+        max_page = min(request.max_page, 5)  # API enforced maximum
+        page = max(request.page, 1)  # Ensure minimum page 1
+        
+        # Calculate expected credit cost (may be less if fewer pages available)
+        expected_credits = max_page
+        
+        # Check credits upfront for maximum possible cost
+        await credit_service.deduct_credits(
+            db=db,
+            user_id=current_user.id,
+            operation="product_search",
+            cost=expected_credits,
+            description=f"Product search: '{request.search_term}' ({max_page} pages max)",
+            extra_data={
+                "search_term": request.search_term,
+                "marketplace": request.marketplace.value,
+                "page": page,
+                "max_page": max_page
+            }
+        )
+        
+        credits_used = expected_credits
+        
+        # Perform the search
+        search_response = await amazon_service.search_products(
+            search_term=request.search_term,
+            marketplace=request.marketplace.value,
+            page=page,
+            max_page=max_page,
+            include_reviews=False  # Search results don't need full reviews
+        )
+        
+        # Extract results and pagination info
+        raw_results = search_response.get("search_results", [])
+        api_pagination = search_response.get("pagination", {})
+        
+        # Calculate actual pages retrieved (for accurate credit calculation)
+        pages_retrieved = len(set(result.get("page", 1) for result in raw_results)) if raw_results else 1
+        pages_retrieved = min(pages_retrieved, max_page)  # Cap at requested max
+        
+        # Refund excess credits if fewer pages were actually retrieved
+        if pages_retrieved < expected_credits:
+            refund_amount = expected_credits - pages_retrieved
+            await credit_service.refund_credits(
+                db=db,
+                user_id=current_user.id,
+                amount=refund_amount,
+                reason="Fewer search pages available than requested",
+                original_operation="product_search",
+                extra_data={
+                    "search_term": request.search_term,
+                    "requested_pages": max_page,
+                    "actual_pages": pages_retrieved
+                }
+            )
+            credits_used = pages_retrieved
+        
+        # Parse and structure search results
+        structured_results = []
+        for result in raw_results:
+            structured_result = {
+                "asin": result.get("asin", ""),
+                "title": result.get("title", ""),
+                "image": result.get("image", result.get("images", [{}])[0].get("link") if result.get("images") else None),
+                "price": {
+                    "amount": result.get("price", {}).get("value"),
+                    "currency": result.get("price", {}).get("currency", "USD"),
+                    "formatted": result.get("price", {}).get("raw")
+                } if result.get("price") else None,
+                "rating": {
+                    "value": result.get("rating"),
+                    "total_reviews": result.get("ratings_total", 0)
+                } if result.get("rating") else None,
+                "availability": result.get("availability", {}).get("type", "unknown"),
+                "sponsored": result.get("sponsored", False),
+                "position": result.get("position", 0),
+                "page": result.get("page", 1),
+                "position_overall": result.get("position_overall")
+            }
+            structured_results.append(structured_result)
+        
+        # Structure pagination metadata
+        pagination = {
+            "current_page": api_pagination.get("current_page", page),
+            "total_pages": api_pagination.get("total_pages", 1),
+            "results_per_page": len(raw_results) // pages_retrieved if pages_retrieved > 0 else len(raw_results),
+            "total_results": api_pagination.get("total_results"),
+            "has_next_page": api_pagination.get("current_page", page) < api_pagination.get("total_pages", 1),
+            "has_previous_page": api_pagination.get("current_page", page) > 1
+        }
+        
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Generate search suggestions (simple implementation)
+        search_suggestions = []
+        if len(structured_results) == 0:
+            # Add some basic suggestions for failed searches
+            words = request.search_term.lower().split()
+            if len(words) > 1:
+                search_suggestions.extend([
+                    " ".join(words[:-1]),  # Remove last word
+                    words[0]  # Use first word only
+                ])
+        
+        # Log successful search
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type="product_search",
+            query_input=request.search_term,
+            credits_deducted=credits_used,
+            status="success",
+            response_time_ms=response_time_ms,
+            api_response_summary={
+                "search_term": request.search_term,
+                "marketplace": request.marketplace.value,
+                "results_count": len(structured_results),
+                "pages_requested": max_page,
+                "pages_retrieved": pages_retrieved,
+                "current_page": pagination["current_page"],
+                "total_pages": pagination["total_pages"]
+            }
+        )
+        
+        return ProductSearchResponse(
+            status="success",
+            search_term=request.search_term,
+            marketplace=request.marketplace.value,
+            credits_used=credits_used,
+            pages_retrieved=pages_retrieved,
+            processing_time_ms=response_time_ms,
+            results=structured_results,
+            pagination=pagination,
+            total_results_returned=len(structured_results),
+            search_suggestions=search_suggestions
+        )
+        
+    except InsufficientCreditsError as e:
+        response_time_ms = int((time.time() - start_time) * 1000)
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type="product_search",
+            query_input=request.search_term,
+            credits_deducted=0,
+            status="error",
+            response_time_ms=response_time_ms,
+            error_details={"error": "insufficient_credits", "message": str(e)}
+        )
+        
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=str(e)
+        )
+    
+    except Exception as e:
+        # Refund credits for unexpected errors
+        if credits_used > 0:
+            await credit_service.refund_credits(
+                db=db,
+                user_id=current_user.id,
+                amount=credits_used,
+                reason="Search operation failed",
+                original_operation="product_search",
+                extra_data={
+                    "search_term": request.search_term,
+                    "error": str(e)
+                }
+            )
+        
+        response_time_ms = int((time.time() - start_time) * 1000)
+        background_tasks.add_task(
+            log_query,
+            db=db,
+            user_id=current_user.id,
+            query_type="product_search",
+            query_input=request.search_term,
+            credits_deducted=0,  # Credits refunded
+            status="error",
+            response_time_ms=response_time_ms,
+            error_details={"error": "processing_error", "message": str(e)}
+        )
+        
+        logger.error(f"Unexpected error in product search: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Search operation failed. Credits have been refunded."
         )
