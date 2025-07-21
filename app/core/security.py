@@ -1,6 +1,7 @@
 """
 JWT authentication and security utilities.
 """
+import logging
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -19,6 +20,7 @@ from app.core.exceptions import (
     ResourceNotFoundError
 )
 
+logger = logging.getLogger(__name__)
 
 # HTTP Bearer token security scheme
 security = HTTPBearer()
@@ -163,24 +165,46 @@ async def get_current_user(
     Raises:
         HTTPException: If user not found
     """
-    # Find user by ID directly (standard database authentication)
-    # User ID is already a string in the database, no need to convert to UUID
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    try:
+        # Find user by ID directly (standard database authentication)
+        # User ID is already a string in the database, no need to convert to UUID
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account is disabled"
+            )
+        
+        return user
     
-    if user is None:
+    except Exception as e:
+        # Handle MultipleResultsFound and other database errors
+        if "Multiple rows were found" in str(e):
+            logger.error(f"Multiple users found for ID {user_id} - database integrity issue")
+            # Get the first active user as a fallback
+            result = await db.execute(
+                select(User)
+                .where(User.id == user_id)
+                .where(User.is_active == True)
+                .limit(1)
+            )
+            user = result.scalar_one_or_none()
+            if user:
+                return user
+        
+        logger.error(f"Error getting user {user_id}: {str(e)}")
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication error occurred"
         )
-    
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is disabled"
-        )
-    
-    return user
 
 
 async def get_current_active_user(

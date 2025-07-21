@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     
     # External APIs
     amazon_api_key: str = Field(default="placeholder-api-key", env="AMAZON_API_KEY")
-    amazon_api_url: str = Field(default="https://api.rainforestapi.com/request", env="AMAZON_API_URL")
+    amazon_api_url: str = Field(default="https://api.asindataapi.com/request", env="AMAZON_API_URL")
     
     # CORS
     cors_origins: str = Field(

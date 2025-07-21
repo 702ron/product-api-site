@@ -64,7 +64,9 @@ class CreditService:
         Raises:
             InsufficientCreditsError: If user lacks sufficient credits
         """
-        async with db.begin():
+        # Check if a transaction is already active, and handle accordingly
+        if db.in_transaction():
+            # Transaction already active, work within it
             # Lock user row for update to prevent race conditions
             result = await db.execute(
                 select(User).where(User.id == user_id).with_for_update()
@@ -94,13 +96,50 @@ class CreditService:
                 extra_data=extra_data or {}
             )
             db.add(transaction)
-            
-            await db.commit()
+            # Don't commit here - let the outer transaction handle it
             
             logger.info(
                 f"Deducted {cost} credits from user {user_id} for {operation}. "
                 f"New balance: {user.credit_balance}"
             )
+        else:
+            # No active transaction, create one
+            async with db.begin():
+                # Lock user row for update to prevent race conditions
+                result = await db.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+                user = result.scalar_one_or_none()
+                
+                if user is None:
+                    raise ValueError(f"User {user_id} not found")
+                
+                # Validate sufficient credits BEFORE deduction
+                if user.credit_balance < cost:
+                    raise InsufficientCreditsError(
+                        f"Operation requires {cost} credits, but user has {user.credit_balance}"
+                    )
+                
+                # Deduct credits
+                user.credit_balance -= cost
+                user.updated_at = datetime.utcnow()
+                
+                # Log transaction
+                transaction = CreditTransaction(
+                    user_id=user.id,
+                    amount=-cost,  # Negative for usage
+                    transaction_type='usage',
+                    operation=operation,
+                    description=description or f"Credit usage for {operation}",
+                    extra_data=extra_data or {}
+                )
+                db.add(transaction)
+                # Transaction will be committed automatically
+                
+                logger.info(
+                    f"Deducted {cost} credits from user {user_id} for {operation}. "
+                    f"New balance: {user.credit_balance}"
+                )
             
             return True
     
@@ -131,7 +170,9 @@ class CreditService:
         Returns:
             True if successful
         """
-        async with db.begin():
+        # Check if a transaction is already active, and handle accordingly
+        if db.in_transaction():
+            # Transaction already active, work within it
             # Lock user row for update
             result = await db.execute(
                 select(User).where(User.id == user_id).with_for_update()
@@ -156,13 +197,45 @@ class CreditService:
                 extra_data=extra_data or {}
             )
             db.add(transaction)
-            
-            await db.commit()
+            # Don't commit here - let the outer transaction handle it
             
             logger.info(
                 f"Added {amount} credits to user {user_id} via {transaction_type}. "
                 f"New balance: {user.credit_balance}"
             )
+        else:
+            # No active transaction, create one
+            async with db.begin():
+                # Lock user row for update
+                result = await db.execute(
+                    select(User).where(User.id == user_id).with_for_update()
+                )
+                user = result.scalar_one_or_none()
+                
+                if user is None:
+                    raise ValueError(f"User {user_id} not found")
+                
+                # Add credits
+                user.credit_balance += amount
+                user.updated_at = datetime.utcnow()
+                
+                # Log transaction
+                transaction = CreditTransaction(
+                    user_id=user.id,
+                    amount=amount,  # Positive for addition
+                    transaction_type=transaction_type,
+                    description=description or f"Added {amount} credits via {transaction_type}",
+                    stripe_session_id=stripe_session_id,
+                    stripe_payment_intent_id=stripe_payment_intent_id,
+                    extra_data=extra_data or {}
+                )
+                db.add(transaction)
+                # Transaction will be committed automatically
+                
+                logger.info(
+                    f"Added {amount} credits to user {user_id} via {transaction_type}. "
+                    f"New balance: {user.credit_balance}"
+                )
             
             return True
     

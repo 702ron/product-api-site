@@ -1,20 +1,14 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { api } from '../lib/api';
 import { 
   Search, 
-  Package, 
-  DollarSign, 
-  Star, 
-  Truck, 
-  Calendar,
-  ExternalLink,
   Loader2,
-  AlertCircle,
-  CheckCircle
+  AlertCircle
 } from 'lucide-react';
+import { DataVisualizationTabs } from '../components/DataVisualizationTabs';
 
 const productQuerySchema = z.object({
   asin: z.string()
@@ -29,20 +23,29 @@ type ProductQueryForm = z.infer<typeof productQuerySchema>;
 interface ProductData {
   asin: string;
   title: string;
-  price: number;
-  currency: string;
-  rating: number;
-  review_count: number;
-  availability: string;
   brand: string;
-  category: string;
-  image_url: string;
-  product_url: string;
-  estimated_sales_rank: number;
-  dimensions: string;
-  weight: string;
-  features: string[];
+  price: {
+    currency: string;
+    amount: number;
+    formatted: string;
+  };
+  rating: {
+    value: number;
+    total_reviews: number;
+  };
+  images: {
+    url: string;
+    variant: string;
+  }[];
+  main_image: string;
   description: string;
+  features: string[];
+  category: string;
+  availability: string;
+  in_stock: boolean;
+  marketplace: string;
+  data_source: string;
+  last_updated: string;
 }
 
 export function ProductQuery() {
@@ -69,10 +72,11 @@ export function ProductQuery() {
 
     try {
       const response = await api.post('/products/asin', data);
-      setProductData(response.data.product);
+      setProductData(response.data.data);
     } catch (error: any) {
       console.error('Product query failed:', error);
       setError(
+        error.response?.data?.error?.message ||
         error.response?.data?.detail || 
         'Failed to fetch product data. Please check your ASIN and try again.'
       );
@@ -98,32 +102,47 @@ export function ProductQuery() {
           </p>
         </div>
 
-        {/* Query Form */}
+        {/* Enhanced Query Form */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Product Lookup</h2>
+          
+          <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="md:col-span-2">
-                <label htmlFor="asin" className="block text-sm font-medium text-gray-700 mb-1">
-                  ASIN
+                <label htmlFor="asin" className="block text-sm font-medium text-gray-700 mb-2">
+                  Amazon ASIN
                 </label>
-                <input
-                  {...register('asin')}
-                  type="text"
-                  placeholder="e.g., B08N5WRWNW"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                />
+                <div className="relative">
+                  <input
+                    {...register('asin')}
+                    type="text"
+                    placeholder="Enter 10-character ASIN (e.g., B08N5WRWNW)"
+                    className={`w-full px-4 py-3 border rounded-lg shadow-sm text-sm transition-colors ${
+                      errors.asin 
+                        ? 'border-red-300 focus:border-red-500 focus:ring-red-500' 
+                        : 'border-gray-300 focus:border-indigo-500 focus:ring-indigo-500'
+                    } focus:outline-none focus:ring-2 focus:ring-offset-0`}
+                  />
+                  {errors.asin && (
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <AlertCircle className="h-5 w-5 text-red-400" />
+                    </div>
+                  )}
+                </div>
                 {errors.asin && (
-                  <p className="mt-1 text-sm text-red-600">{errors.asin.message}</p>
+                  <p className="mt-2 text-sm text-red-600" role="alert">
+                    {errors.asin.message}
+                  </p>
                 )}
               </div>
 
               <div>
-                <label htmlFor="marketplace" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="marketplace" className="block text-sm font-medium text-gray-700 mb-2">
                   Marketplace
                 </label>
                 <select
                   {...register('marketplace')}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-sm bg-white"
                 >
                   <option value="US">United States</option>
                   <option value="UK">United Kingdom</option>
@@ -138,28 +157,41 @@ export function ProductQuery() {
               </div>
             </div>
 
-            <div className="flex items-center space-x-4">
-              <button
-                type="submit"
-                disabled={loading}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4 mr-2" />
-                )}
-                {loading ? 'Searching...' : 'Search Product'}
-              </button>
-
-              {productData && (
+            <div className="flex justify-between items-center">
+              <div className="flex items-center space-x-4">
                 <button
-                  type="button"
-                  onClick={handleNewQuery}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  type="submit"
+                  disabled={loading}
+                  className="inline-flex items-center px-6 py-3 border border-transparent text-base font-medium rounded-lg shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  New Search
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                      Searching...
+                    </>
+                  ) : (
+                    <>
+                      <Search className="h-5 w-5 mr-2" />
+                      Search Product
+                    </>
+                  )}
                 </button>
+
+                {productData && (
+                  <button
+                    type="button"
+                    onClick={handleNewQuery}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
+                  >
+                    New Search
+                  </button>
+                )}
+              </div>
+              
+              {productData && (
+                <div className="text-sm text-gray-500">
+                  Found: {productData.title ? productData.title.substring(0, 50) + '...' : 'Product data'}
+                </div>
               )}
             </div>
           </form>
@@ -175,141 +207,12 @@ export function ProductQuery() {
           </div>
         )}
 
-        {/* Product Data Display */}
+        {/* Enhanced Product Data Display with Tabs */}
         {productData && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-200">
-              <div className="flex items-center">
-                <CheckCircle className="h-5 w-5 text-green-500 mr-2" />
-                <h2 className="text-lg font-semibold text-gray-900">Product Information</h2>
-              </div>
-            </div>
-
-            <div className="p-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Product Image and Basic Info */}
-                <div>
-                  <div className="aspect-square w-full max-w-md mx-auto bg-gray-100 rounded-lg overflow-hidden mb-4">
-                    <img
-                      src={productData.image_url}
-                      alt={productData.title}
-                      className="w-full h-full object-contain"
-                      onError={(e) => {
-                        e.currentTarget.src = '/placeholder-product.png';
-                      }}
-                    />
-                  </div>
-                  
-                  <div className="text-center space-y-2">
-                    <p className="text-sm text-gray-600">ASIN: {productData.asin}</p>
-                    <a
-                      href={productData.product_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-indigo-600 hover:text-indigo-500"
-                    >
-                      View on Amazon
-                      <ExternalLink className="h-4 w-4 ml-1" />
-                    </a>
-                  </div>
-                </div>
-
-                {/* Product Details */}
-                <div className="space-y-6">
-                  <div>
-                    <h3 className="text-xl font-semibold text-gray-900 mb-2">{productData.title}</h3>
-                    <p className="text-gray-600 mb-4">{productData.brand}</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <DollarSign className="h-5 w-5 text-green-600 mr-2" />
-                        <div>
-                          <p className="text-sm text-gray-600">Price</p>
-                          <p className="text-lg font-semibold text-gray-900">
-                            {productData.currency} {productData.price}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <Star className="h-5 w-5 text-yellow-500 mr-2" />
-                        <div>
-                          <p className="text-sm text-gray-600">Rating</p>
-                          <p className="text-lg font-semibold text-gray-900">
-                            {productData.rating}/5 ({productData.review_count} reviews)
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <Truck className="h-5 w-5 text-blue-600 mr-2" />
-                        <div>
-                          <p className="text-sm text-gray-600">Availability</p>
-                          <p className="text-lg font-semibold text-gray-900">{productData.availability}</p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex items-center">
-                        <Package className="h-5 w-5 text-purple-600 mr-2" />
-                        <div>
-                          <p className="text-sm text-gray-600">Sales Rank</p>
-                          <p className="text-lg font-semibold text-gray-900">
-                            #{productData.estimated_sales_rank?.toLocaleString() || 'N/A'}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Additional Details */}
-                  <div className="space-y-4">
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-2">Category</h4>
-                      <p className="text-gray-600">{productData.category}</p>
-                    </div>
-
-                    <div>
-                      <h4 className="font-medium text-gray-900 mb-2">Dimensions & Weight</h4>
-                      <p className="text-gray-600">
-                        {productData.dimensions} • {productData.weight}
-                      </p>
-                    </div>
-
-                    {productData.features && productData.features.length > 0 && (
-                      <div>
-                        <h4 className="font-medium text-gray-900 mb-2">Key Features</h4>
-                        <ul className="list-disc list-inside space-y-1 text-gray-600">
-                          {productData.features.slice(0, 5).map((feature, index) => (
-                            <li key={index}>{feature}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {productData.description && (
-                      <div>
-                        <h4 className="font-medium text-gray-900 mb-2">Description</h4>
-                        <p className="text-gray-600 text-sm leading-relaxed">
-                          {productData.description.length > 300
-                            ? `${productData.description.substring(0, 300)}...`
-                            : productData.description
-                          }
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <DataVisualizationTabs 
+            productData={productData} 
+            loading={loading}
+          />
         )}
       </div>
     </div>
